@@ -16,13 +16,6 @@ const defaultBrowserOptions: Required<Omit<PlaywrightBrowserOptions, 'cdpEndpoin
 
 let browserOptions: PlaywrightBrowserOptions = { ...defaultBrowserOptions };
 
-/**
- * Configure how Playwright-backed extraction opens a browser.
- *
- * Defaults preserve the original behavior: bundled Chromium in headless mode.
- * When cdpEndpoint is set, calls to chromium.launch() are transparently routed
- * to an existing Chromium-based browser via connectOverCDP().
- */
 export function configurePlaywrightBrowser(options: PlaywrightBrowserOptions = {}): void {
   browserOptions = {
     ...defaultBrowserOptions,
@@ -31,14 +24,6 @@ export function configurePlaywrightBrowser(options: PlaywrightBrowserOptions = {
   };
 }
 
-/**
- * Loads playwright from any location it might be installed:
- * 1. Bundled with the CLI (peer dep)
- * 2. In the user's cwd node_modules (local project install)
- * 3. In the global npm prefix (npm install -g playwright)
- *
- * Returns the playwright module or null if not found anywhere.
- */
 export function loadPlaywright(): any | null {
   const playwright = loadRawPlaywright();
   if (!playwright) return null;
@@ -48,26 +33,20 @@ export function loadPlaywright(): any | null {
     !browserOptions.headed &&
     !browserOptions.cdpEndpoint;
 
-  // Preserve the original object and launch behavior when no opt-in browser
-  // settings were requested.
   if (useDefaultChromium) return playwright;
-
   return wrapPlaywright(playwright);
 }
 
 function loadRawPlaywright(): any | null {
-  // 1. Try standard require (works when playwright is in same node_modules tree)
   try {
     return require('playwright');
-  } catch { /* fall through */ }
+  } catch {}
 
-  // 2. Try from cwd (user ran: npm install playwright in their project)
   try {
     const cwdPath = path.join(process.cwd(), 'node_modules', 'playwright');
     return require(cwdPath);
-  } catch { /* fall through */ }
+  } catch {}
 
-  // 3. Try from global npm prefix (npm install -g playwright)
   try {
     const globalRoot = execSync('npm root -g', {
       encoding: 'utf-8',
@@ -75,7 +54,7 @@ function loadRawPlaywright(): any | null {
       timeout: 5000,
     }).trim();
     return require(path.join(globalRoot, 'playwright'));
-  } catch { /* fall through */ }
+  } catch {}
 
   return null;
 }
@@ -93,15 +72,8 @@ function wrapPlaywright(playwright: any): any {
           }
 
           const nextOptions: Record<string, unknown> = { ...launchOptions };
-
-          if (browserOptions.browser === 'chrome') {
-            nextOptions.channel = 'chrome';
-          }
-
-          if (browserOptions.headed) {
-            nextOptions.headless = false;
-          }
-
+          if (browserOptions.browser === 'chrome') nextOptions.channel = 'chrome';
+          if (browserOptions.headed) nextOptions.headless = false;
           return target.launch(nextOptions);
         };
       }
@@ -118,26 +90,29 @@ function wrapPlaywright(playwright: any): any {
   });
 }
 
-/**
- * Adapt a CDP-connected browser to the existing extractor contract.
- *
- * Existing extractors expect chromium.launch() to return a browser whose
- * newContext() creates an isolated context. For CDP we intentionally reuse the
- * browser's default context so cookies, sessions, extensions, and the real
- * browser environment remain available. browser.close() is left intact: for a
- * connected Playwright Browser it disconnects the client instead of shutting
- * down the externally-owned browser.
- */
 function wrapConnectedBrowser(browser: any): any {
+  const createdPages = new Set<any>();
+
   return new Proxy(browser, {
     get(target, prop) {
       if (prop === 'newContext') {
         return async (contextOptions?: Record<string, unknown>) => {
           const existingContext = target.contexts()[0];
-          if (existingContext) return wrapConnectedContext(existingContext);
-
+          if (existingContext) return wrapConnectedContext(existingContext, createdPages);
           const context = await target.newContext(contextOptions);
-          return wrapConnectedContext(context);
+          return wrapConnectedContext(context, createdPages);
+        };
+      }
+
+      if (prop === 'close') {
+        return async (...args: unknown[]) => {
+          for (const page of Array.from(createdPages)) {
+            try {
+              if (!page.isClosed?.()) await page.close();
+            } catch {}
+          }
+          createdPages.clear();
+          return target.close(...args);
         };
       }
 
@@ -146,14 +121,7 @@ function wrapConnectedBrowser(browser: any): any {
   });
 }
 
-/**
- * Expose only pages created by the current extractor through context.pages().
- * This prevents legacy cleanup code from accidentally closing a user's
- * pre-existing Chrome tabs while still reusing the real default context.
- */
-function wrapConnectedContext(context: any): any {
-  const createdPages = new Set<any>();
-
+function wrapConnectedContext(context: any, createdPages: Set<any>): any {
   return new Proxy(context, {
     get(target, prop) {
       if (prop === 'newPage') {
@@ -170,8 +138,6 @@ function wrapConnectedContext(context: any): any {
       }
 
       if (prop === 'close') {
-        // The CDP default context belongs to the external browser and cannot be
-        // closed independently. Pages created by SkillUI are closed explicitly.
         return async () => {};
       }
 

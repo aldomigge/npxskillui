@@ -122,10 +122,11 @@ function wrapPlaywright(playwright: any): any {
  * Adapt a CDP-connected browser to the existing extractor contract.
  *
  * Existing extractors expect chromium.launch() to return a browser whose
- * newContext() creates an isolated context and whose close() owns the browser.
- * For CDP we intentionally reuse the browser's default context so cookies,
- * sessions, extensions, and the real browser environment remain available.
- * close() becomes a no-op so SkillUI never shuts down the user's browser.
+ * newContext() creates an isolated context. For CDP we intentionally reuse the
+ * browser's default context so cookies, sessions, extensions, and the real
+ * browser environment remain available. browser.close() is left intact: for a
+ * connected Playwright Browser it disconnects the client instead of shutting
+ * down the externally-owned browser.
  */
 function wrapConnectedBrowser(browser: any): any {
   return new Proxy(browser, {
@@ -138,11 +139,6 @@ function wrapConnectedBrowser(browser: any): any {
           const context = await target.newContext(contextOptions);
           return wrapConnectedContext(context);
         };
-      }
-
-      if (prop === 'close') {
-        // Do not close a browser SkillUI did not launch.
-        return async () => {};
       }
 
       return bindProperty(target, prop);
@@ -174,7 +170,8 @@ function wrapConnectedContext(context: any): any {
       }
 
       if (prop === 'close') {
-        // Do not close the user's default browser context.
+        // The CDP default context belongs to the external browser and cannot be
+        // closed independently. Pages created by SkillUI are closed explicitly.
         return async () => {};
       }
 

@@ -1,22 +1,78 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { loadPlaywright } from './playwright-loader';
 
 /**
- * Capture a screenshot of a website using the microlink.io free API.
- * No API key required for basic usage.
+ * Capture the homepage screenshot.
  *
- * Saves screenshot to skillDir/screenshots/homepage.png
- * Returns the local relative path, or null if capture fails.
+ * Backward compatibility:
+ * - Original flow (no explicit browser flags): keep using microlink.io.
+ * - Explicit browser flow (--browser, --headed, --cdp-endpoint): use the same
+ *   configured Playwright runtime as the rest of the extraction pipeline.
  */
 export async function captureScreenshot(
   url: string,
   skillDir: string
 ): Promise<string | null> {
-  try {
-    const screenshotsDir = path.join(skillDir, 'screenshots');
-    fs.mkdirSync(screenshotsDir, { recursive: true });
+  const screenshotsDir = path.join(skillDir, 'screenshots');
+  fs.mkdirSync(screenshotsDir, { recursive: true });
 
-    // microlink.io with embed=screenshot.url returns the image bytes directly
+  if (hasExplicitBrowserOption()) {
+    return captureWithPlaywright(url, screenshotsDir);
+  }
+
+  return captureWithMicrolink(url, screenshotsDir);
+}
+
+function hasExplicitBrowserOption(): boolean {
+  const args = process.argv.slice(2);
+  return args.some((arg) =>
+    arg === '--headed' ||
+    arg === '--browser' ||
+    arg.startsWith('--browser=') ||
+    arg === '--cdp-endpoint' ||
+    arg.startsWith('--cdp-endpoint=')
+  );
+}
+
+async function captureWithPlaywright(
+  url: string,
+  screenshotsDir: string
+): Promise<string | null> {
+  const playwright = loadPlaywright();
+  if (!playwright) return null;
+
+  let browser: any = null;
+  let page: any = null;
+
+  try {
+    browser = await playwright.chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+
+    page = await context.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+
+    const destPath = path.join(screenshotsDir, 'homepage.png');
+    await page.screenshot({ path: destPath, fullPage: true });
+    return 'screenshots/homepage.png';
+  } catch {
+    return null;
+  } finally {
+    try { if (page && !page.isClosed?.()) await page.close(); } catch {}
+    try { if (browser) await browser.close(); } catch {}
+  }
+}
+
+async function captureWithMicrolink(
+  url: string,
+  screenshotsDir: string
+): Promise<string | null> {
+  try {
     const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=true&meta=false&embed=screenshot.url&waitFor=2000`;
 
     const res = await fetch(apiUrl, {
@@ -28,7 +84,6 @@ export async function captureScreenshot(
 
     const contentType = res.headers.get('content-type') || '';
 
-    // The embed=screenshot.url mode returns image bytes directly
     if (contentType.startsWith('image/')) {
       const buffer = Buffer.from(await res.arrayBuffer());
       if (buffer.length < 1000) return null;
@@ -38,7 +93,6 @@ export async function captureScreenshot(
       return `screenshots/homepage.${ext}`;
     }
 
-    // Fallback: try JSON response (without embed param behaviour)
     const text = await res.text();
     try {
       const json = JSON.parse(text) as any;

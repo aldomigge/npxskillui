@@ -1,14 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadPlaywright } from './playwright-loader';
+import { hasCustomPlaywrightBrowser, loadPlaywright } from './playwright-loader';
 
 /**
  * Capture the homepage screenshot.
  *
  * Backward compatibility:
- * - Original flow (no explicit browser flags): keep using microlink.io.
- * - Explicit browser flow (--browser, --headed, --cdp-endpoint): use the same
- *   configured Playwright runtime as the rest of the extraction pipeline.
+ * - Legacy bundled headless Chromium flow: keep using microlink.io.
+ * - Custom browser flow (Chrome, headed, or CDP): use the same configured
+ *   Playwright runtime as the rest of the extraction pipeline.
  */
 export async function captureScreenshot(
   url: string,
@@ -17,22 +17,11 @@ export async function captureScreenshot(
   const screenshotsDir = path.join(skillDir, 'screenshots');
   fs.mkdirSync(screenshotsDir, { recursive: true });
 
-  if (hasExplicitBrowserOption()) {
+  if (hasCustomPlaywrightBrowser()) {
     return captureWithPlaywright(url, screenshotsDir);
   }
 
   return captureWithMicrolink(url, screenshotsDir);
-}
-
-function hasExplicitBrowserOption(): boolean {
-  const args = process.argv.slice(2);
-  return args.some((arg) =>
-    arg === '--headed' ||
-    arg === '--browser' ||
-    arg.startsWith('--browser=') ||
-    arg === '--cdp-endpoint' ||
-    arg.startsWith('--cdp-endpoint=')
-  );
 }
 
 async function captureWithPlaywright(

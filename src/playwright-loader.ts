@@ -24,16 +24,23 @@ export function configurePlaywrightBrowser(options: PlaywrightBrowserOptions = {
   };
 }
 
+/**
+ * Whether SkillUI is using a browser runtime that differs from the legacy
+ * bundled headless Chromium path.
+ */
+export function hasCustomPlaywrightBrowser(): boolean {
+  return (
+    browserOptions.browser === 'chrome' ||
+    !!browserOptions.headed ||
+    !!browserOptions.cdpEndpoint
+  );
+}
+
 export function loadPlaywright(): any | null {
   const playwright = loadRawPlaywright();
   if (!playwright) return null;
 
-  const useDefaultChromium =
-    browserOptions.browser === 'chromium' &&
-    !browserOptions.headed &&
-    !browserOptions.cdpEndpoint;
-
-  if (useDefaultChromium) return playwright;
+  if (!hasCustomPlaywrightBrowser()) return playwright;
   return wrapPlaywright(playwright);
 }
 

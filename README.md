@@ -37,12 +37,19 @@ npm install -g skillui
 
 > Requires **Node.js 18+**
 
-For **ultra mode** (full visual extraction with Playwright):
+For browser-backed extraction, install Playwright:
 
 ```bash
 npm install playwright
+```
+
+The default ultra-mode browser is Playwright's bundled Chromium, which also requires:
+
+```bash
 npx playwright install chromium
 ```
+
+If you use `--browser chrome` or `--cdp-endpoint`, SkillUI can use an installed/existing Chromium-based browser instead of the bundled Chromium executable.
 
 ---
 
@@ -67,7 +74,7 @@ Claude automatically reads `CLAUDE.md` and `SKILL.md` - no manual setup needed. 
 
 ### Default mode - pure static analysis
 
-Extracts HTML, CSS, fonts, color tokens, spacing, and typography. Works on any site, no browser required.
+Extracts HTML, CSS, fonts, color tokens, spacing, and typography. Works on any site, no browser required for the HTTP/CSS extraction path.
 
 ```bash
 skillui --url https://linear.app
@@ -80,6 +87,78 @@ Uses Playwright to capture scroll screenshots, interaction diffs, animation dete
 ```bash
 skillui --url https://linear.app --mode ultra
 ```
+
+By default, all Playwright-backed extraction preserves the original behavior and launches bundled Chromium headlessly.
+
+### Browser runtime options
+
+SkillUI supports three browser strategies. Choose the simplest one that renders the target site correctly.
+
+| Strategy | Command | Best for |
+|---|---|---|
+| Bundled Chromium | `--mode ultra` | Default, isolated and fully Playwright-managed extraction |
+| Installed Chrome | `--browser chrome` | Chrome-specific rendering while still letting Playwright launch the browser |
+| Existing browser via CDP | `--cdp-endpoint <url>` | Sites that render incorrectly in Playwright-launched browsers, existing sessions, or real browser environments |
+
+#### Use installed Google Chrome
+
+Use the system Chrome channel instead of Playwright's bundled Chromium:
+
+```bash
+skillui --url https://linear.app --mode ultra --browser chrome
+```
+
+Add `--headed` if you want the launched browser to be visible:
+
+```bash
+skillui --url https://linear.app --mode ultra --browser chrome --headed
+```
+
+`--browser chrome` still launches and controls Chrome through Playwright with a fresh Playwright-managed session. It is **not the same as attaching to a Chrome instance you started yourself**. If a site still renders incorrectly with `--browser chrome --headed`, use CDP.
+
+#### Reuse an existing Chrome via CDP
+
+For sites that render incorrectly when the browser is launched by Playwright, SkillUI can attach to an already-running Chromium-based browser through the Chrome DevTools Protocol (CDP):
+
+```bash
+skillui \
+  --url https://example.com \
+  --mode ultra \
+  --cdp-endpoint http://127.0.0.1:9222
+```
+
+When connected over CDP, SkillUI reuses the browser's default context. This allows the extraction to run inside the externally launched browser environment. SkillUI tracks the pages it creates so pre-existing tabs are left untouched, and disconnecting Playwright does not terminate the externally owned browser.
+
+**CDP is the recommended fallback when bundled Chromium or `--browser chrome` produces blank, incomplete, blocked, or otherwise incorrect captures.**
+
+For current Chrome versions, remote debugging should use a separate user-data directory. Chrome 136+ does not honor `--remote-debugging-port` against the default Chrome data directory.
+
+Example on Windows PowerShell:
+
+```powershell
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+  --remote-debugging-port=9222 `
+  --user-data-dir="C:\chrome-skillui-profile"
+```
+
+Verify that the endpoint is available:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:9222/json/version
+```
+
+Then run SkillUI:
+
+```powershell
+skillui `
+  --url "https://example.com" `
+  --mode ultra `
+  --cdp-endpoint "http://127.0.0.1:9222"
+```
+
+`--cdp-endpoint` takes precedence over `--browser` and `--headed` because SkillUI is attaching to a browser that is already running.
+
+When a custom browser runtime is selected (`--browser chrome`, `--headed`, or `--cdp-endpoint`), the homepage screenshot under `screenshots/` uses that configured Playwright runtime as well. With no custom browser flags, the original Microlink homepage screenshot behavior is preserved.
 
 ### Dir mode - local project scan
 
@@ -153,6 +232,9 @@ skillui --repo <url>          Clone and scan a git repository
 
 --mode ultra                  Enable cinematic extraction (requires Playwright)
 --screens <n>                 Pages to crawl in ultra mode (default: 5, max: 20)
+--browser chromium|chrome     Playwright browser to launch (default: chromium)
+--headed                      Show the launched Playwright browser window
+--cdp-endpoint <url>          Attach to an existing Chromium/Chrome browser over CDP
 --out <path>                  Output directory (default: ./)
 --name <string>               Override the project name
 --format design-md|skill|both Output format (default: both)
@@ -166,6 +248,12 @@ skillui --repo <url>          Clone and scan a git repository
 ```bash
 # Full ultra extraction - Nothing.tech
 skillui --url https://nothing.tech --mode ultra --screens 10
+
+# Same extraction using installed Google Chrome launched by Playwright
+skillui --url https://nothing.tech --mode ultra --browser chrome --headed
+
+# Recommended fallback for sites that do not render correctly above
+skillui --url https://nothing.tech --mode ultra --cdp-endpoint http://127.0.0.1:9222
 
 # Scan a local Next.js app
 skillui --dir ./my-nextjs-app --name "MyApp"
@@ -225,7 +313,7 @@ skillui --url https://linear.app --out ./design-systems
 | `1.1.8` | April 9, 2026 |
 | `1.1.7` | April 9, 2026 |
 | `1.1.6` | April 9, 2026 |
-| `1.1.5` | April 9, 2026 |
+| `1.1.5` | April 8, 2026 |
 | `1.1.4` | April 8, 2026 |
 | `1.1.3` | April 8, 2026 |
 | `1.1.2` | April 8, 2026 |
@@ -238,19 +326,23 @@ skillui --url https://linear.app --out ./design-systems
 
 ## How It Works
 
-SkillUI uses pure static analysis. No AI, no API keys, no cloud - everything runs locally.
+SkillUI performs its design extraction locally and does not use AI or require API keys. The legacy homepage screenshot path uses Microlink; custom browser runtimes capture that screenshot locally through Playwright.
 
 - **URL mode** - fetches HTML, crawls all linked CSS files, extracts computed styles via Playwright DOM inspection
 - **Dir mode** - scans `.css`, `.scss`, `.ts`, `.tsx`, `.js`, `.jsx` for design tokens, Tailwind config, CSS variables, and component patterns
 - **Repo mode** - clones the repo to a temp directory and runs dir mode
 - **Ultra mode** - runs Playwright to capture scroll screenshots, detect animation libraries from `window.*` globals, extract `@keyframes` from `document.styleSheets`, capture hover/focus state diffs, fingerprint DOM components
+- **Browser runtime** - defaults to bundled headless Chromium, can launch installed Chrome, or attach to an existing Chromium-based browser over CDP
 
 ---
 
 ## Requirements
 
 - Node.js 18+
-- For `--mode ultra`: Playwright (`npm install playwright && npx playwright install chromium`)
+- Playwright package for Playwright-backed extraction (`npm install playwright`)
+- Bundled Chromium installation for the default Playwright flow (`npx playwright install chromium`)
+- For `--browser chrome`: a compatible Google Chrome installation
+- For `--cdp-endpoint`: an already-running Chromium-based browser with remote debugging enabled; current Chrome versions should use a non-default `--user-data-dir`
 
 ---
 

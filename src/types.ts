@@ -258,4 +258,7 @@ export interface CLIOptions {
   format: 'design-md' | 'skill' | 'both';
   mode: 'default' | 'ultra';
   screens: string;
+  browser: 'chromium' | 'chrome';
+  headed: boolean;
+  cdpEndpoint?: string;
 }

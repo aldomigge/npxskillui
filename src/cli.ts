@@ -7,6 +7,7 @@ import { runUrlMode } from './modes/url.js';
 import { runUltraMode } from './modes/ultra.js';
 import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
+import { configurePlaywrightBrowser } from './playwright-loader.js';
 import { CLIOptions, DesignProfile } from './types.js';
 import {
   VERSION,
@@ -36,6 +37,9 @@ program
   .option('--format <format>', 'Output format: design-md | skill | both', 'both')
   .option('--mode <mode>', 'Extraction mode: default | ultra', 'default')
   .option('--screens <number>', 'Ultra mode: max pages to crawl (default: 5)', '5')
+  .option('--browser <browser>', 'Playwright browser: chromium | chrome', 'chromium')
+  .option('--headed', 'Run a launched Playwright browser with a visible window', false)
+  .option('--cdp-endpoint <url>', 'Connect to an existing Chromium/Chrome browser over CDP')
   .action(async (opts: CLIOptions) => {
     // Always show the logo on every command
     await showLogo();
@@ -55,6 +59,29 @@ program
       console.error('  Error: Specify only one of --dir, --repo, or --url\n');
       process.exit(1);
     }
+
+    if (!['chromium', 'chrome'].includes(opts.browser)) {
+      console.error(`  Error: Unsupported browser "${opts.browser}". Use chromium or chrome.\n`);
+      process.exit(1);
+    }
+
+    if (opts.cdpEndpoint) {
+      try {
+        const cdpUrl = new URL(opts.cdpEndpoint);
+        if (!['http:', 'https:', 'ws:', 'wss:'].includes(cdpUrl.protocol)) throw new Error('unsupported protocol');
+      } catch {
+        console.error('  Error: --cdp-endpoint must be a valid http(s) or ws(s) URL.\n');
+        process.exit(1);
+      }
+    }
+
+    // Configure all Playwright-backed extractors in one place. With no browser
+    // flags this preserves the original headless Chromium behavior.
+    configurePlaywrightBrowser({
+      browser: opts.browser,
+      headed: opts.headed,
+      cdpEndpoint: opts.cdpEndpoint,
+    });
 
     // ── Determine target label for brief ──────────────────────────────
     const target = opts.url || opts.dir || opts.repo || '';

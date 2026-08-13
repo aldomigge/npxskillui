@@ -81,6 +81,43 @@ Uses Playwright to capture scroll screenshots, interaction diffs, animation dete
 skillui --url https://linear.app --mode ultra
 ```
 
+By default, all Playwright-backed extraction keeps the original behavior and launches bundled Chromium headlessly.
+
+#### Use installed Google Chrome
+
+Use the system Chrome channel instead of Playwright's bundled Chromium:
+
+```bash
+skillui --url https://linear.app --mode ultra --browser chrome
+```
+
+Add `--headed` if you want the launched browser to be visible:
+
+```bash
+skillui --url https://linear.app --mode ultra --browser chrome --headed
+```
+
+#### Reuse an existing Chrome via CDP
+
+For sites that depend on a real browser profile, cookies, extensions, GPU/WebGL, or an authenticated session, SkillUI can connect to an already-running Chromium-based browser through the Chrome DevTools Protocol:
+
+```bash
+skillui \
+  --url https://example.com \
+  --mode ultra \
+  --cdp-endpoint http://127.0.0.1:9222
+```
+
+When connected over CDP, SkillUI reuses the browser's default context and does **not** close the browser or pre-existing tabs. It opens and cleans up only the pages it creates.
+
+A dedicated automation profile is recommended when starting Chrome with remote debugging. Example on Windows:
+
+```powershell
+chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\chrome-skillui-profile"
+```
+
+`--cdp-endpoint` takes precedence over `--browser` and `--headed` because SkillUI is attaching to a browser that is already running.
+
 ### Dir mode - local project scan
 
 Scans `.css`, `.scss`, `.ts`, `.tsx`, `.js`, `.jsx` for design tokens, Tailwind config, CSS variables, and component patterns.
@@ -153,6 +190,9 @@ skillui --repo <url>          Clone and scan a git repository
 
 --mode ultra                  Enable cinematic extraction (requires Playwright)
 --screens <n>                 Pages to crawl in ultra mode (default: 5, max: 20)
+--browser chromium|chrome     Playwright browser to launch (default: chromium)
+--headed                      Show the launched Playwright browser window
+--cdp-endpoint <url>          Attach to an existing Chromium/Chrome browser over CDP
 --out <path>                  Output directory (default: ./)
 --name <string>               Override the project name
 --format design-md|skill|both Output format (default: both)
@@ -166,6 +206,12 @@ skillui --repo <url>          Clone and scan a git repository
 ```bash
 # Full ultra extraction - Nothing.tech
 skillui --url https://nothing.tech --mode ultra --screens 10
+
+# Same extraction using installed Google Chrome
+skillui --url https://nothing.tech --mode ultra --browser chrome --headed
+
+# Reuse a real Chrome session exposed on port 9222
+skillui --url https://nothing.tech --mode ultra --cdp-endpoint http://127.0.0.1:9222
 
 # Scan a local Next.js app
 skillui --dir ./my-nextjs-app --name "MyApp"
@@ -225,7 +271,7 @@ skillui --url https://linear.app --out ./design-systems
 | `1.1.8` | April 9, 2026 |
 | `1.1.7` | April 9, 2026 |
 | `1.1.6` | April 9, 2026 |
-| `1.1.5` | April 9, 2026 |
+| `1.1.5` | April 8, 2026 |
 | `1.1.4` | April 8, 2026 |
 | `1.1.3` | April 8, 2026 |
 | `1.1.2` | April 8, 2026 |
@@ -244,6 +290,7 @@ SkillUI uses pure static analysis. No AI, no API keys, no cloud - everything run
 - **Dir mode** - scans `.css`, `.scss`, `.ts`, `.tsx`, `.js`, `.jsx` for design tokens, Tailwind config, CSS variables, and component patterns
 - **Repo mode** - clones the repo to a temp directory and runs dir mode
 - **Ultra mode** - runs Playwright to capture scroll screenshots, detect animation libraries from `window.*` globals, extract `@keyframes` from `document.styleSheets`, capture hover/focus state diffs, fingerprint DOM components
+- **Browser runtime** - defaults to bundled headless Chromium, can launch installed Chrome, or attach to an existing Chromium-based browser over CDP
 
 ---
 
@@ -251,6 +298,8 @@ SkillUI uses pure static analysis. No AI, no API keys, no cloud - everything run
 
 - Node.js 18+
 - For `--mode ultra`: Playwright (`npm install playwright && npx playwright install chromium`)
+- For `--browser chrome`: a compatible Google Chrome installation
+- For `--cdp-endpoint`: an already-running Chromium-based browser with remote debugging enabled
 
 ---
 

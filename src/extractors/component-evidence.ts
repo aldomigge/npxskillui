@@ -9,6 +9,12 @@ import type {
 import type { DOMComponent } from '../types-ultra';
 
 const MIN_RUNTIME_PROMOTION_CONFIDENCE = 0.75;
+const LAYOUT_UTILITY_CLASS_PATTERNS = [
+  /^Flex_/i,
+  /^Grid_/i,
+  /^Stack_/i,
+  /^Layout_/i,
+];
 
 const DOM_CATEGORY_MAP: Record<DOMComponent['category'], ComponentCategory> = {
   card: 'data-display',
@@ -92,14 +98,17 @@ export function domComponentToEvidence(
  * DesignProfile component. Raw Ultra observations are still preserved in
  * references/COMPONENTS.md even when they are not promoted here.
  *
- * PR #4 intentionally keeps this policy simple: unknown repeated structures
- * remain candidates, while classified runtime structures above the baseline
- * confidence threshold may enrich the canonical component inventory.
+ * PR #4 intentionally keeps this policy narrow: unknown structures and
+ * layout-utility-dominated wrappers remain raw candidates, while classified
+ * runtime structures above the confidence baseline may enrich the canonical
+ * component inventory.
  */
 export function shouldPromoteRuntimeEvidence(evidence: ComponentEvidence): boolean {
   if (evidence.source !== 'runtime-dom') return true;
-  return evidence.categoryHint !== 'other'
-    && evidence.confidence >= MIN_RUNTIME_PROMOTION_CONFIDENCE;
+  if (evidence.categoryHint === 'other') return false;
+  if (evidence.confidence < MIN_RUNTIME_PROMOTION_CONFIDENCE) return false;
+  if (isLayoutUtilityWrapper(evidence)) return false;
+  return true;
 }
 
 /**
@@ -136,7 +145,7 @@ export function mergeComponentEvidence(
  * did not.
  *
  * The raw detector inventory remains available to Ultra documentation. Only
- * classified evidence is promoted into the canonical profile, preventing
+ * qualified evidence is promoted into the canonical profile, preventing
  * utility wrappers and unclassified substructures from inflating Detected comps.
  */
 export function mergeRuntimeComponentsIntoProfile(
@@ -305,6 +314,19 @@ function isGenericKindMatch(componentName: string, kind: string): boolean {
 
 function isGenericComponentName(componentName: string, kind: string): boolean {
   return isGenericKindMatch(componentName, kind);
+}
+
+function isLayoutUtilityWrapper(evidence: ComponentEvidence): boolean {
+  if (evidence.classes.length === 0) return false;
+
+  const utilityClasses = evidence.classes.filter(className =>
+    LAYOUT_UTILITY_CLASS_PATTERNS.some(pattern => pattern.test(className))
+  );
+  const utilityRatio = utilityClasses.length / evidence.classes.length;
+  const name = normalizeName(evidence.nameHint || '');
+  const utilityLikeName = /^(flex|grid|stack|layout|row|column|container|wrapper|center)/.test(name);
+
+  return utilityLikeName && utilityRatio >= 0.5;
 }
 
 function sameEvidence(a: ComponentEvidence, b: ComponentEvidence): boolean {

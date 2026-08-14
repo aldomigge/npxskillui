@@ -89,13 +89,38 @@ export interface LayoutRecord {
 
 // ── DOM Components ───────────────────────────────────────────────────
 
+export type DOMComponentCategory =
+  | 'card'
+  | 'list-item'
+  | 'nav-item'
+  | 'navigation'
+  | 'form-field'
+  | 'button'
+  | 'badge'
+  | 'table'
+  | 'dialog'
+  | 'unknown';
+
 export interface DOMComponent {
   name: string;
   pattern: string;
   instances: number;
   commonClasses: string[];
   htmlSnippet: string;
-  category: 'card' | 'list-item' | 'nav-item' | 'form-field' | 'button' | 'badge' | 'unknown';
+  category: DOMComponentCategory;
+  /** Representative rendered tag for this structural pattern. */
+  tag?: string;
+  /** Explicit ARIA role when present. */
+  role?: string;
+  /** Confidence assigned by Runtime Component Detector v2. */
+  confidence?: number;
+  /** Human-readable evidence that produced the classification. */
+  reasons?: string[];
+  attributes?: {
+    ariaLabel?: string;
+    ariaRole?: string;
+    inputType?: string;
+  };
 }
 
 // ── Animation Extraction ─────────────────────────────────────────────

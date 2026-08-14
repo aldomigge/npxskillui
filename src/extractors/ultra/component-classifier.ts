@@ -40,14 +40,16 @@ export function classifyDOMCandidate(candidate: DOMCandidateSummary): DOMClassif
   const tag = candidate.tag.toLowerCase();
   const role = (candidate.role || '').toLowerCase();
   const normalizedClasses = candidate.classes.map(stripCssModuleHash);
-  const classText = normalizedClasses.join(' ').toLowerCase();
+  const classWords = new Set(
+    normalizedClasses.flatMap(identifierWords).map(word => word.toLowerCase())
+  );
+  const hasClassWord = (...words: string[]): boolean => words.some(word => classWords.has(word));
   const ancestorTags = candidate.ancestorTags.map(value => value.toLowerCase());
   const ancestorRoles = candidate.ancestorRoles.map(value => value.toLowerCase());
   const insideNavigation = ancestorTags.includes('nav')
     || ancestorRoles.includes('navigation')
     || ancestorRoles.includes('menu')
-    || /navigation/.test(classText)
-    || /(^|[\s_-])(nav|menu|tabs?)([\s_-]|$)/.test(classText);
+    || hasClassWord('navigation', 'nav', 'menu', 'tab', 'tabs');
 
   if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog') {
     return classification('dialog', 0.98, 1, [`semantic ${tag === 'dialog' ? '<dialog>' : `role=${role}`} evidence`]);
@@ -85,7 +87,7 @@ export function classifyDOMCandidate(candidate: DOMCandidateSummary): DOMClassif
 
   // Class semantics come after native/ARIA semantics. Specific chips/badges must
   // win over generic list-item signals such as an enclosing <li>.
-  if (/(^|[\s_-])(badge|chip|pill|status|tag)([\s_-]|$)/.test(classText)) {
+  if (hasClassWord('badge', 'chip', 'pill', 'status', 'tag')) {
     return classification('badge', 0.9, 1, ['semantic badge/chip class token']);
   }
 
@@ -97,21 +99,22 @@ export function classifyDOMCandidate(candidate: DOMCandidateSummary): DOMClassif
     return classification('list-item', 0.86, 1, ['semantic <li> evidence']);
   }
 
-  if (/(^|[\s_-])(list[-_ ]?item|timeline[-_ ]?item)([\s_-]|$)/.test(classText)) {
+  if ((classWords.has('list') && classWords.has('item'))
+    || (classWords.has('timeline') && classWords.has('item'))) {
     return classification('list-item', 0.84, 3, ['semantic list-item class token']);
   }
 
   // Deliberately avoid the old generic /item/ card rule. "item" is far too
   // broad and was the reason navigation entries were classified as cards.
-  if (/(^|[\s_-])(card|tile|panel|product[-_ ]?card|post[-_ ]?card)([\s_-]|$)/.test(classText)) {
+  if (hasClassWord('card', 'tile', 'panel')) {
     return classification('card', 0.84, 3, ['semantic card/tile/panel class token']);
   }
 
-  if (/(^|[\s_-])(btn|button)([\s_-]|$)/.test(classText)) {
+  if (hasClassWord('btn', 'button')) {
     return classification('button', 0.82, 3, ['button-like class token']);
   }
 
-  if (/(^|[\s_-])(field|form[-_ ]?field|input)([\s_-]|$)/.test(classText)) {
+  if (hasClassWord('field', 'input') || (classWords.has('form') && classWords.has('field'))) {
     return classification('form-field', 0.82, 3, ['form-field-like class token']);
   }
 
@@ -165,13 +168,18 @@ function isUtilityClass(value: string): boolean {
   return /^(flex|grid|stack|layout|row|col|column|container|wrapper|relative|absolute|inline|block)([-_]|$)/i.test(value);
 }
 
-function humanizeIdentifier(value: string): string {
+function identifierWords(value: string): string[] {
   return value
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, char => char.toUpperCase());
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function humanizeIdentifier(value: string): string {
+  return identifierWords(value)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 function cleanLabel(value: string): string {

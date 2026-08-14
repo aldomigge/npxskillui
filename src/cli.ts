@@ -9,11 +9,10 @@ import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
 import { configurePlaywrightBrowser } from './playwright-loader.js';
 import { installAgentIntegrations } from './agents/index.js';
-import { promptAgentTarget, showAgentResults } from './agents/ui.js';
+import { promptAgentTarget, showAgentLogo, showAgentResults } from './agents/ui.js';
 import { CLIOptions, DesignProfile } from './types.js';
 import {
   VERSION,
-  showLogo,
   showMissionBrief,
   startSpinner,
   succeedSpinner,
@@ -43,7 +42,7 @@ program
   .option('--cdp-endpoint <url>', 'Connect to an existing Chromium/Chrome browser over CDP')
   .option('--agent <agent>', 'Agent integration: claude | codex | both', 'claude')
   .action(async (opts: CLIOptions) => {
-    await showLogo();
+    await showAgentLogo();
 
     const modes = [opts.dir, opts.repo, opts.url].filter(Boolean);
 

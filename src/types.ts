@@ -13,7 +13,7 @@ export interface DesignProfile {
   breakpoints: Breakpoint[];
   cssVariables: CSSVariable[];
   borderRadius: string[];
-  fontVarMap: Record<string, string>; // maps CSS var names to resolved font names
+  fontVarMap: Record<string, string>;
   antiPatterns: string[];
   designTraits: DesignTraits;
   animations: AnimationToken[];
@@ -42,8 +42,6 @@ export interface DesignTraits {
   motionStyle: 'none' | 'subtle' | 'expressive';
 }
 
-// ── Component Categories ────────────────────────────────────────────
-
 export type ComponentCategory =
   | 'layout'
   | 'navigation'
@@ -55,8 +53,6 @@ export type ComponentCategory =
   | 'media'
   | 'other';
 
-// ── Animations ──────────────────────────────────────────────────────
-
 export interface AnimationToken {
   name: string;
   type: 'css-keyframe' | 'css-transition' | 'framer-motion' | 'spring';
@@ -64,15 +60,11 @@ export interface AnimationToken {
   source: string;
 }
 
-// ── Dark Mode ───────────────────────────────────────────────────────
-
 export interface DarkModeVar {
   variable: string;
   lightValue: string;
   darkValue: string;
 }
-
-// ── Frameworks ───────────────────────────────────────────────────────
 
 export type FrameworkId =
   | 'tailwind'
@@ -90,8 +82,6 @@ export interface Framework {
   name: string;
   version?: string;
 }
-
-// ── Color Tokens ─────────────────────────────────────────────────────
 
 export type ColorRole =
   | 'background'
@@ -114,8 +104,6 @@ export interface ColorToken {
   source: 'tailwind' | 'css' | 'tokens-file' | 'component' | 'computed';
 }
 
-// ── Typography ───────────────────────────────────────────────────────
-
 export type TypographyRole =
   | 'heading-1'
   | 'heading-2'
@@ -135,15 +123,11 @@ export interface TypographyToken {
   source: 'tailwind' | 'css' | 'tokens-file' | 'component' | 'computed';
 }
 
-// ── Spacing ──────────────────────────────────────────────────────────
-
 export interface SpacingScale {
   base: number;
   values: number[];
   unit: 'px' | 'rem';
 }
-
-// ── Shadows ──────────────────────────────────────────────────────────
 
 export type ShadowLevel = 'flat' | 'raised' | 'floating' | 'overlay';
 
@@ -152,8 +136,6 @@ export interface ShadowToken {
   level: ShadowLevel;
   name?: string;
 }
-
-// ── Components ───────────────────────────────────────────────────────
 
 export interface ComponentInfo {
   name: string;
@@ -179,23 +161,17 @@ export interface TailwindPattern {
   interactive: string[];
 }
 
-// ── Breakpoints ──────────────────────────────────────────────────────
-
 export interface Breakpoint {
   name: string;
   value: string;
   source: 'tailwind' | 'css';
 }
 
-// ── CSS Variables ────────────────────────────────────────────────────
-
 export interface CSSVariable {
   name: string;
   value: string;
   property?: string;
 }
-
-// ── Raw extraction (before normalization) ────────────────────────────
 
 export interface RawTokens {
   colors: Array<{ value: string; frequency: number; source: ColorToken['source']; name?: string }>;
@@ -219,16 +195,12 @@ export interface RawTokens {
   siteTitle?: string | null;
 }
 
-// ── Font Sources ────────────────────────────────────────────────────
-
 export interface FontSource {
   family: string;
   src: string;
   format?: string;
   weight?: string;
 }
-
-// ── Page Sections (URL mode) ────────────────────────────────────────
 
 export interface PageSection {
   type: 'navigation' | 'hero' | 'features' | 'content' | 'cards' | 'faq' | 'footer' | 'cta' | 'stats' | 'testimonials';
@@ -238,15 +210,11 @@ export interface PageSection {
   description: string;
 }
 
-// ── Motion Tokens ───────────────────────────────────────────────────
-
 export interface MotionTokens {
   durations: string[];
   easings: string[];
   properties: string[];
 }
-
-// ── CLI Options ──────────────────────────────────────────────────────
 
 export interface CLIOptions {
   dir?: string;
@@ -261,4 +229,5 @@ export interface CLIOptions {
   browser: 'chromium' | 'chrome';
   headed: boolean;
   cdpEndpoint?: string;
+  agent: 'claude' | 'codex' | 'both';
 }

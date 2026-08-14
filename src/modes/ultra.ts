@@ -7,6 +7,7 @@ import { captureInteractions } from '../extractors/ultra/interactions';
 import { extractLayouts } from '../extractors/ultra/layout';
 import { detectDOMComponents } from '../extractors/ultra/components-dom';
 import { captureAnimations } from '../extractors/ultra/animations';
+import { mergeRuntimeComponentsIntoProfile } from '../extractors/component-evidence';
 import { generateLayoutMd } from '../writers/layout-md';
 import { generateInteractionsMd } from '../writers/interactions-md';
 import { generateComponentsMd } from '../writers/components-md';
@@ -30,7 +31,8 @@ import { loadPlaywright } from '../playwright-loader';
  * - tokens/spacing.json
  * - tokens/typography.json
  *
- * All existing outputs remain untouched.
+ * Runtime DOM components are also merged back into profile.components before
+ * DESIGN.md/SKILL.md are generated, so all outputs use one normalized source.
  */
 export async function runUltraMode(
   url: string,
@@ -69,8 +71,9 @@ export async function runUltraMode(
   // ── Step 4: Layout extraction ──────────────────────────────────────────
   const layouts = await extractLayouts(url);
 
-  // ── Step 5: DOM component detection ───────────────────────────────────
+  // ── Step 5: DOM component detection + evidence merge ──────────────────
   const domComponents = await detectDOMComponents(url);
+  mergeRuntimeComponentsIntoProfile(profile, domComponents, url);
 
   // ── Step 6: Write all reference files ─────────────────────────────────
 
@@ -186,7 +189,7 @@ function generateVisualGuideMd(
   return md;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────
 
 function printUltraSummary(anim: FullAnimationResult): void {
   const libs = anim.libraries.map(l => l.name).join(', ') || 'none';

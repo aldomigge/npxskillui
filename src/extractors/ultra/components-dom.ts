@@ -1,15 +1,26 @@
 import { DOMComponent } from '../../types-ultra';
 import { loadPlaywright } from '../../playwright-loader';
+import {
+  classifyDOMCandidate,
+  deriveDOMComponentName,
+  type DOMCandidateSummary,
+} from './component-classifier';
+
+interface RawDOMGroup extends DOMCandidateSummary {
+  pattern: string;
+  instances: number;
+  htmlSnippet: string;
+}
 
 /**
- * Ultra mode — DOM Component Detector
+ * Ultra mode — Runtime Component Detector v2
  *
- * Detects repeated UI components by analyzing DOM structure:
- * - Elements with the same class pattern appearing 3+ times → component
- * - Groups by normalized class fingerprint
- * - Extracts representative HTML snippet
+ * Detection separates observation from classification:
+ * - browser: collect rendered structure, HTML/ARIA semantics, classes, ancestry
+ * - node: classify with semantic HTML/ARIA first, class naming second
  *
- * Requires Playwright (optional peer dependency).
+ * High-confidence semantic controls may be retained even when unique. Generic
+ * structural patterns still require repetition before they become candidates.
  */
 export async function detectDOMComponents(url: string): Promise<DOMComponent[]> {
   const playwright = loadPlaywright();
@@ -27,117 +38,190 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    const components: DOMComponent[] = await page.evaluate(() => {
-      // ── Fingerprint an element by its structure ───────────────────────
-      function fingerprint(el: Element): string {
-        const tag = el.tagName.toLowerCase();
-        // Normalize class names: remove dynamic/utility classes, sort
-        const stableClasses = Array.from(el.classList)
-          .filter(c => {
-            // Skip Tailwind utility classes, JS hooks, state classes
-            if (/^(js-|is-|has-|data-|aria-)/.test(c)) return false;
-            if (/^(hover:|focus:|active:|sm:|md:|lg:|xl:|2xl:)/.test(c)) return false;
-            // Keep semantic/BEM-like classes
-            return c.length >= 3 && c.length <= 40 && /^[a-zA-Z]/.test(c);
-          })
-          .sort()
-          .slice(0, 4);
-        const childTags = Array.from(el.children)
-          .slice(0, 4)
-          .map(c => c.tagName.toLowerCase())
-          .join(',');
-        return `${tag}[${stableClasses.join('.')}](${childTags})`;
-      }
+    const rawGroups = await page.evaluate(() => {
+      type BrowserCandidate = {
+        pattern: string;
+        instances: number;
+        tag: string;
+        role?: string;
+        classes: string[];
+        ancestorTags: string[];
+        ancestorRoles: string[];
+        ariaLabel?: string;
+        inputType?: string;
+        htmlSnippet: string;
+        semanticSignal: boolean;
+      };
 
-      // ── Serialize HTML snippet (truncated) ─────────────────────────────
-      function htmlSnippet(el: Element): string {
-        const clone = el.cloneNode(true) as Element;
-        // Remove deeply nested children to keep snippet readable
-        const children = clone.querySelectorAll('*');
-        if (children.length > 12) {
-          Array.from(children).slice(12).forEach(c => c.remove());
-        }
-        // Truncate text nodes
-        clone.querySelectorAll('*').forEach(n => {
-          if (n.children.length === 0 && n.textContent && n.textContent.length > 40) {
-            n.textContent = n.textContent.slice(0, 40) + '…';
-          }
-        });
-        return clone.outerHTML.replace(/\s+/g, ' ').slice(0, 600);
-      }
-
-      // ── Categorize a component ────────────────────────────────────────
-      function categorize(el: Element, classes: string[]): DOMComponent['category'] {
-        const tag = el.tagName.toLowerCase();
-        const classStr = classes.join(' ').toLowerCase();
-
-        if (/card|tile|item|product|post/.test(classStr)) return 'card';
-        if (/nav.*item|menu.*item|tab/.test(classStr)) return 'nav-item';
-        if (tag === 'li' || /list.*item/.test(classStr)) return 'list-item';
-        if (tag === 'button' || /btn|button/.test(classStr)) return 'button';
-        if (/badge|tag|chip|label/.test(classStr)) return 'badge';
-        if (/field|input|form/.test(classStr)) return 'form-field';
-        return 'unknown';
-      }
-
-      // ── Walk all elements with 1+ class ─────────────────────────────────
-      const allElements = document.querySelectorAll('[class]');
-      const groups = new Map<string, Element[]>();
-
-      allElements.forEach(el => {
-        const rect = el.getBoundingClientRect();
-        // Must be visible and reasonably sized
-        if (rect.width < 40 || rect.height < 20) return;
-        // Skip wrapper-only elements (body, html, main, etc.)
-        const tag = el.tagName.toLowerCase();
-        if (['html', 'body', 'main', 'head', 'script', 'style', 'link', 'meta'].includes(tag)) return;
-
-        const fp = fingerprint(el);
-        if (!groups.has(fp)) groups.set(fp, []);
-        groups.get(fp)!.push(el);
-      });
-
-      // ── Filter to repeated components (3+ instances) ──────────────────
-      const results: DOMComponent[] = [];
-
-      for (const [fp, els] of groups.entries()) {
-        if (els.length < 3) continue;
-
-        const representative = els[0];
-        const stableClasses = Array.from(representative.classList)
-          .filter(c => {
-            if (/^(js-|is-|has-)/.test(c)) return false;
-            if (/^(hover:|focus:|sm:|md:|lg:)/.test(c)) return false;
-            return c.length >= 3;
+      function stableClasses(el: Element): string[] {
+        return Array.from(el.classList)
+          .filter(className => {
+            if (/^(js-|is-|has-|data-|aria-)/.test(className)) return false;
+            if (/^(hover:|focus:|active:|sm:|md:|lg:|xl:|2xl:)/.test(className)) return false;
+            return className.length >= 3 && className.length <= 80 && /^[a-zA-Z]/.test(className);
           })
           .sort()
           .slice(0, 6);
-
-        // Generate a human-readable component name
-        const tag = representative.tagName.toLowerCase();
-        const mainClass = stableClasses[0] || tag;
-        const name = mainClass
-          .replace(/[-_]/g, ' ')
-          .replace(/\b\w/g, l => l.toUpperCase())
-          .trim() || tag;
-
-        const category = categorize(representative, stableClasses);
-
-        results.push({
-          name,
-          pattern: fp,
-          instances: els.length,
-          commonClasses: stableClasses,
-          htmlSnippet: htmlSnippet(representative),
-          category,
-        });
-
-        if (results.length >= 20) break;
       }
 
-      // Sort by instance count descending
-      return results.sort((a, b) => b.instances - a.instances);
-    });
+      function childStructure(el: Element): string {
+        return Array.from(el.children)
+          .slice(0, 5)
+          .map(child => {
+            const tag = child.tagName.toLowerCase();
+            const role = child.getAttribute('role');
+            const grandchildren = Array.from(child.children)
+              .slice(0, 3)
+              .map(grandchild => grandchild.tagName.toLowerCase())
+              .join(',');
+            return `${tag}${role ? `:${role}` : ''}{${grandchildren}}`;
+          })
+          .join(',');
+      }
+
+      function fingerprint(el: Element, classes: string[]): string {
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute('role') || '';
+        const inputType = el instanceof HTMLInputElement ? el.type : '';
+        const semanticKey = classes.length === 0
+          ? (el.getAttribute('aria-label') || el.getAttribute('name') || '').trim().slice(0, 80)
+          : '';
+        return `${tag}|role=${role}|type=${inputType}|key=${semanticKey}[${classes.join('.')}](${childStructure(el)})`;
+      }
+
+      function htmlSnippet(el: Element): string {
+        const clone = el.cloneNode(true) as Element;
+        const children = clone.querySelectorAll('*');
+        if (children.length > 12) {
+          Array.from(children).slice(12).forEach(child => child.remove());
+        }
+        clone.querySelectorAll('*').forEach(node => {
+          if (node.children.length === 0 && node.textContent && node.textContent.length > 40) {
+            node.textContent = node.textContent.slice(0, 40) + '…';
+          }
+        });
+        return clone.outerHTML.replace(/\s+/g, ' ').slice(0, 700);
+      }
+
+      function ancestry(el: Element): { tags: string[]; roles: string[] } {
+        const tags: string[] = [];
+        const roles: string[] = [];
+        let parent = el.parentElement;
+        let depth = 0;
+        while (parent && depth < 5) {
+          tags.push(parent.tagName.toLowerCase());
+          const role = parent.getAttribute('role');
+          if (role) roles.push(role);
+          parent = parent.parentElement;
+          depth++;
+        }
+        return { tags, roles };
+      }
+
+      function hasSemanticSignal(el: Element, classes: string[]): boolean {
+        const tag = el.tagName.toLowerCase();
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        const classText = classes.join(' ').toLowerCase();
+        if (['button', 'input', 'select', 'textarea', 'nav', 'table', 'dialog'].includes(tag)) return true;
+        if (role && role !== 'presentation' && role !== 'none') return true;
+        if (tag === 'li' && el.closest('nav,[role="navigation"],[role="menu"]')) return true;
+        if (tag === 'a') {
+          if (el.closest('nav,[role="navigation"],[role="menu"]')) return true;
+          if (/navigation|(^|[_-])nav([_-]|$)|menu|tabs?/.test(classText)) return true;
+        }
+        return /badge|chip|pill|status/.test(classText);
+      }
+
+      const selector = [
+        '[class]',
+        '[role]',
+        'a',
+        'button',
+        'input',
+        'select',
+        'textarea',
+        'nav',
+        'table',
+        'dialog',
+        'li',
+      ].join(',');
+
+      const groups = new Map<string, BrowserCandidate>();
+
+      document.querySelectorAll(selector).forEach(el => {
+        const tag = el.tagName.toLowerCase();
+        if (['html', 'body', 'main', 'head', 'script', 'style', 'link', 'meta'].includes(tag)) return;
+
+        const rect = el.getBoundingClientRect();
+        const classes = stableClasses(el);
+        const semanticSignal = hasSemanticSignal(el, classes);
+        const minimumWidth = semanticSignal ? 8 : 40;
+        const minimumHeight = semanticSignal ? 8 : 20;
+        if (rect.width < minimumWidth || rect.height < minimumHeight) return;
+
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return;
+
+        const pattern = fingerprint(el, classes);
+        const current = groups.get(pattern);
+        if (current) {
+          current.instances++;
+          current.semanticSignal = current.semanticSignal || semanticSignal;
+          return;
+        }
+
+        const ancestors = ancestry(el);
+        groups.set(pattern, {
+          pattern,
+          instances: 1,
+          tag,
+          role: el.getAttribute('role') || undefined,
+          classes,
+          ancestorTags: ancestors.tags,
+          ancestorRoles: ancestors.roles,
+          ariaLabel: el.getAttribute('aria-label') || undefined,
+          inputType: el instanceof HTMLInputElement ? el.type : undefined,
+          htmlSnippet: htmlSnippet(el),
+          semanticSignal,
+        });
+      });
+
+      return [...groups.values()]
+        .filter(group => group.instances >= 3 || group.semanticSignal)
+        .sort((a, b) => b.instances - a.instances)
+        .slice(0, 120)
+        .map(({ semanticSignal: _semanticSignal, ...group }) => group);
+    }) as RawDOMGroup[];
+
+    const components = rawGroups
+      .map(group => {
+        const classification = classifyDOMCandidate(group);
+        if (group.instances < classification.minimumInstances) return null;
+
+        return {
+          name: deriveDOMComponentName(group),
+          pattern: group.pattern,
+          instances: group.instances,
+          commonClasses: group.classes,
+          htmlSnippet: group.htmlSnippet,
+          category: classification.category,
+          tag: group.tag,
+          role: group.role,
+          confidence: classification.confidence,
+          reasons: classification.reasons,
+          attributes: {
+            ariaLabel: group.ariaLabel,
+            ariaRole: group.role,
+            inputType: group.inputType,
+          },
+        } satisfies DOMComponent;
+      })
+      .filter((component): component is DOMComponent => component !== null)
+      .sort((a, b) => {
+        const confidenceDiff = (b.confidence || 0) - (a.confidence || 0);
+        return confidenceDiff !== 0 ? confidenceDiff : b.instances - a.instances;
+      })
+      .slice(0, 40);
 
     await page.close();
     await browser.close();

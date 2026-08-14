@@ -3,6 +3,7 @@ import type {
   ComponentEvidence,
   ComponentEvidenceSource,
   ComponentInfo,
+  ComponentStateEvidence,
   DesignProfile,
   TailwindPattern,
 } from '../types';
@@ -59,6 +60,8 @@ export function componentInfoToEvidence(
     classes: [...component.cssClasses],
     instances: component.instances ?? 1,
     structureFingerprint: `${component.category}:${name}:${classFingerprint}`,
+    measuredStyle: component.measuredStyle,
+    stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
     htmlSnippet: component.jsxSnippet || undefined,
     confidence,
     reasons: [
@@ -97,6 +100,9 @@ export function domComponentToEvidence(
       : undefined,
     instances: component.instances,
     structureFingerprint: component.pattern,
+    styleFingerprint: component.styleFingerprint,
+    measuredStyle: component.measuredStyle,
+    stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
     htmlSnippet: component.htmlSnippet,
     confidence,
     reasons: [
@@ -108,6 +114,8 @@ export function domComponentToEvidence(
               ? `runtime structure classified as ${component.category}`
               : 'runtime structure did not match a semantic component category',
           ]),
+      ...(component.measuredStyle ? ['representative default computed style measured from rendered DOM'] : []),
+      ...(component.stateEvidence?.length ? [`${component.stateEvidence.length} interaction state observation(s) matched to component`] : []),
     ],
   };
 }
@@ -199,6 +207,7 @@ function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
       animationDetails: [...component.animationDetails],
       statePatterns: [...component.statePatterns],
       pages: component.pages ? [...component.pages] : undefined,
+      stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
       tailwindPatterns: cloneTailwindPattern(component.tailwindPatterns),
     };
   }
@@ -216,6 +225,8 @@ function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
     instances: component.instances ?? evidence.instances,
     pages: component.pages ? [...component.pages] : undefined,
     confidence: component.confidence ?? evidence.confidence,
+    measuredStyle: component.measuredStyle,
+    stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
     evidence: [evidence],
   };
 }
@@ -270,6 +281,8 @@ function mergeEvidenceIntoComponent(
     instances: Math.max(component.instances ?? 1, evidence.instances),
     pages: pages.size > 0 ? [...pages] : undefined,
     confidence: Math.max(component.confidence ?? 0, evidence.confidence),
+    measuredStyle: evidence.measuredStyle || component.measuredStyle,
+    stateEvidence: mergeStateEvidence(component.stateEvidence, evidence.stateEvidence),
     evidence: evidenceList,
   };
 }
@@ -290,6 +303,8 @@ function componentFromEvidence(evidence: ComponentEvidence): ComponentInfo {
     instances: evidence.instances,
     pages: evidence.pageUrl ? [evidence.pageUrl] : undefined,
     confidence: evidence.confidence,
+    measuredStyle: evidence.measuredStyle,
+    stateEvidence: evidence.stateEvidence ? [...evidence.stateEvidence] : undefined,
     evidence: [evidence],
   };
 }
@@ -343,6 +358,26 @@ function sameEvidence(a: ComponentEvidence, b: ComponentEvidence): boolean {
   return a.source === b.source
     && a.pageUrl === b.pageUrl
     && a.structureFingerprint === b.structureFingerprint;
+}
+
+function mergeStateEvidence(
+  left?: ComponentStateEvidence[],
+  right?: ComponentStateEvidence[]
+): ComponentStateEvidence[] | undefined {
+  const all = [...(left || []), ...(right || [])];
+  if (all.length === 0) return undefined;
+
+  const seen = new Set<string>();
+  return all.filter(state => {
+    const changes = state.changes
+      .map(change => `${change.property}:${change.from}->${change.to}`)
+      .sort()
+      .join('|');
+    const key = `${state.state}|${state.selector || ''}|${changes}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function overlapRatio(a: string[], b: string[]): number {

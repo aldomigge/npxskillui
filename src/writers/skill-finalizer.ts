@@ -178,6 +178,18 @@ function typographySummarySentence(usage: TypographyUsage): string {
   return 'Typography roles must follow the extracted type-scale table; font purpose must not be inferred from discovery order.';
 }
 
+function typographyPromptLine(usage: TypographyUsage): string {
+  if (usage.bodyFont && usage.headingFont && usage.bodyFont !== usage.headingFont && usage.hasBodyEvidence && usage.hasHeadingEvidence) {
+    return `3. Typography: body/caption ${usage.bodyFont}; headings ${usage.headingFont}; exact type scale from Section 3`;
+  }
+
+  if (usage.bodyFont || usage.headingFont) {
+    return `3. Typography: ${usage.bodyFont || usage.headingFont}; exact role assignments from Section 3`;
+  }
+
+  return '3. Typography: follow the extracted role assignments and type scale from Section 3';
+}
+
 function normalizeDesignMdGuidance(
   content: string,
   usage: TypographyUsage,
@@ -204,6 +216,20 @@ function normalizeDesignMdGuidance(
   if (usage.bodyFont) {
     content = content.replace(/^Font:\s+.*$/gm, `Font: ${usage.bodyFont}`);
   }
+
+  content = content.replace(
+    /^3\. Font:\s+.*?, type scale from Section 3$/gm,
+    typographyPromptLine(usage)
+  );
+
+  const componentPromptLine = detectedCount === 0
+    ? '5. Components: none confidently detected; use token-derived recipes only as starting points and validate against screenshots'
+    : `5. Components: prefer the ${detectedCount} detected component records from Section 4; use token-derived recipes only as fallback guidance`;
+
+  content = content.replace(
+    /^5\. Components: match patterns from Section 4$/gm,
+    componentPromptLine
+  );
 
   const agentGuideIntro = detectedCount === 0
     ? 'No components were confidently detected. The examples below are token-derived implementation starting points, not extracted component evidence. Validate them against screenshots and tokens before use.'

@@ -55,6 +55,13 @@ function runClassifierBenchmark(): { passed: number; total: number } {
       name: 'Landing Top Section Chip',
     },
     {
+      label: 'CSS-module hash with underscore is fully stripped',
+      candidate: candidate('div', ['RewardItemCard_badge__07_mn']),
+      category: 'badge',
+      minimumInstances: 1,
+      name: 'Reward Item Card Badge',
+    },
+    {
       label: 'classless native button',
       candidate: { ...candidate('button'), ariaLabel: 'Play' },
       category: 'button',

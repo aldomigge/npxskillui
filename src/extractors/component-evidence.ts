@@ -8,6 +8,8 @@ import type {
 } from '../types';
 import type { DOMComponent } from '../types-ultra';
 
+const MIN_RUNTIME_PROMOTION_CONFIDENCE = 0.75;
+
 const DOM_CATEGORY_MAP: Record<DOMComponent['category'], ComponentCategory> = {
   card: 'data-display',
   'list-item': 'data-display',
@@ -86,6 +88,21 @@ export function domComponentToEvidence(
 }
 
 /**
+ * Decide whether a runtime observation is strong enough to become a canonical
+ * DesignProfile component. Raw Ultra observations are still preserved in
+ * references/COMPONENTS.md even when they are not promoted here.
+ *
+ * PR #4 intentionally keeps this policy simple: unknown repeated structures
+ * remain candidates, while classified runtime structures above the baseline
+ * confidence threshold may enrich the canonical component inventory.
+ */
+export function shouldPromoteRuntimeEvidence(evidence: ComponentEvidence): boolean {
+  if (evidence.source !== 'runtime-dom') return true;
+  return evidence.categoryHint !== 'other'
+    && evidence.confidence >= MIN_RUNTIME_PROMOTION_CONFIDENCE;
+}
+
+/**
  * Merge independently observed component evidence into normalized components.
  *
  * This intentionally performs conservative deduplication. Exact normalized
@@ -117,6 +134,10 @@ export function mergeComponentEvidence(
  * by DESIGN.md and SKILL.md writers. This closes the old split where
  * references/COMPONENTS.md knew about runtime components but profile.components
  * did not.
+ *
+ * The raw detector inventory remains available to Ultra documentation. Only
+ * classified evidence is promoted into the canonical profile, preventing
+ * utility wrappers and unclassified substructures from inflating Detected comps.
  */
 export function mergeRuntimeComponentsIntoProfile(
   profile: DesignProfile,
@@ -124,7 +145,8 @@ export function mergeRuntimeComponentsIntoProfile(
   pageUrl: string
 ): void {
   const runtimeEvidence = domComponents.map(component => domComponentToEvidence(component, pageUrl));
-  profile.components = mergeComponentEvidence(profile.components, runtimeEvidence);
+  const promotableEvidence = runtimeEvidence.filter(shouldPromoteRuntimeEvidence);
+  profile.components = mergeComponentEvidence(profile.components, promotableEvidence);
   profile.componentCategories = buildComponentCategories(profile.components);
 }
 

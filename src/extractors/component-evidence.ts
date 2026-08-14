@@ -20,9 +20,12 @@ const DOM_CATEGORY_MAP: Record<DOMComponent['category'], ComponentCategory> = {
   card: 'data-display',
   'list-item': 'data-display',
   'nav-item': 'navigation',
+  navigation: 'navigation',
   button: 'data-input',
   badge: 'data-display',
   'form-field': 'data-input',
+  table: 'data-display',
+  dialog: 'overlay',
   unknown: 'other',
 };
 
@@ -66,29 +69,45 @@ export function componentInfoToEvidence(
   };
 }
 
-/** Convert the existing Ultra DOM detector output into the shared evidence model. */
+/** Convert Runtime Component Detector output into the shared evidence model. */
 export function domComponentToEvidence(
   component: DOMComponent,
   pageUrl: string
 ): ComponentEvidence {
   const knownCategory = component.category !== 'unknown';
+  const confidence = component.confidence ?? (knownCategory ? 0.8 : 0.6);
+  const observedReason = component.instances === 1
+    ? 'runtime DOM structure observed once with strong semantic evidence'
+    : `runtime DOM structure observed ${component.instances} times`;
 
   return {
     source: 'runtime-dom',
     pageUrl,
+    tag: component.tag,
+    role: component.role,
     nameHint: component.name,
     kindHint: component.category,
     categoryHint: DOM_CATEGORY_MAP[component.category],
     classes: [...component.commonClasses],
+    attributes: component.attributes
+      ? {
+          ariaLabel: component.attributes.ariaLabel,
+          ariaRole: component.attributes.ariaRole,
+        }
+      : undefined,
     instances: component.instances,
     structureFingerprint: component.pattern,
     htmlSnippet: component.htmlSnippet,
-    confidence: knownCategory ? 0.8 : 0.6,
+    confidence,
     reasons: [
-      `repeated runtime DOM structure observed ${component.instances} times`,
-      knownCategory
-        ? `runtime structure classified as ${component.category}`
-        : 'runtime structure did not match a semantic component category',
+      observedReason,
+      ...(component.reasons?.length
+        ? component.reasons
+        : [
+            knownCategory
+              ? `runtime structure classified as ${component.category}`
+              : 'runtime structure did not match a semantic component category',
+          ]),
     ],
   };
 }
@@ -97,11 +116,6 @@ export function domComponentToEvidence(
  * Decide whether a runtime observation is strong enough to become a canonical
  * DesignProfile component. Raw Ultra observations are still preserved in
  * references/COMPONENTS.md even when they are not promoted here.
- *
- * PR #4 intentionally keeps this policy narrow: unknown structures and
- * layout-utility-dominated wrappers remain raw candidates, while classified
- * runtime structures above the confidence baseline may enrich the canonical
- * component inventory.
  */
 export function shouldPromoteRuntimeEvidence(evidence: ComponentEvidence): boolean {
   if (evidence.source !== 'runtime-dom') return true;
@@ -138,16 +152,7 @@ export function mergeComponentEvidence(
   return components;
 }
 
-/**
- * Merge Ultra runtime DOM evidence directly into the DesignProfile used later
- * by DESIGN.md and SKILL.md writers. This closes the old split where
- * references/COMPONENTS.md knew about runtime components but profile.components
- * did not.
- *
- * The raw detector inventory remains available to Ultra documentation. Only
- * qualified evidence is promoted into the canonical profile, preventing
- * utility wrappers and unclassified substructures from inflating Detected comps.
- */
+/** Merge qualified runtime DOM evidence into the canonical DesignProfile. */
 export function mergeRuntimeComponentsIntoProfile(
   profile: DesignProfile,
   domComponents: DOMComponent[],
@@ -296,6 +301,8 @@ function inferKindFromComponent(component: ComponentInfo): string {
   if (/nav|menu|tab/.test(name)) return 'nav-item';
   if (/badge|chip|tag/.test(name)) return 'badge';
   if (/input|field|form/.test(name)) return 'form-field';
+  if (/table|grid/.test(name)) return 'table';
+  if (/dialog|modal|drawer/.test(name)) return 'dialog';
   if (/list|item|timeline/.test(name)) return 'list-item';
   return component.category;
 }
@@ -304,9 +311,12 @@ function isGenericKindMatch(componentName: string, kind: string): boolean {
   const aliases: Record<string, RegExp> = {
     button: /^(button|btn)$/,
     card: /^(card|tile|panel)$/,
+    navigation: /^(navigation|nav|menu)$/,
     'nav-item': /^(navigation|nav|navitem|menu|menuitem|tab)$/,
     badge: /^(badge|chip|tag|label|pill)$/,
     'form-field': /^(input|field|formfield|select|textarea)$/,
+    table: /^(table|grid|datatable)$/,
+    dialog: /^(dialog|modal|drawer|overlay)$/,
     'list-item': /^(list|listitem|item|timeline)$/,
   };
   return aliases[kind]?.test(componentName) ?? componentName === normalizeName(kind);

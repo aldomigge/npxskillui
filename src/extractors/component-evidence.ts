@@ -22,6 +22,10 @@ const DOM_CATEGORY_MAP: Record<DOMComponent['category'], ComponentCategory> = {
  * Convert an existing normalized component back into an evidence record.
  * This lets source-code/HTTP observations participate in the same merge path
  * as runtime DOM evidence without changing the legacy extractors yet.
+ *
+ * pageUrl must only be supplied when the caller actually knows which page
+ * produced the observation. Legacy HTTP crawling currently aggregates pages,
+ * so callers should leave it undefined rather than inventing provenance.
  */
 export function componentInfoToEvidence(
   component: ComponentInfo,
@@ -91,10 +95,9 @@ export function domComponentToEvidence(
  */
 export function mergeComponentEvidence(
   existingComponents: ComponentInfo[],
-  incomingEvidence: ComponentEvidence[],
-  defaultPageUrl?: string
+  incomingEvidence: ComponentEvidence[]
 ): ComponentInfo[] {
-  const components = existingComponents.map(component => seedComponentEvidence(component, defaultPageUrl));
+  const components = existingComponents.map(component => seedComponentEvidence(component));
 
   for (const evidence of incomingEvidence) {
     const matchIndex = findMatchingComponentIndex(components, evidence);
@@ -121,7 +124,7 @@ export function mergeRuntimeComponentsIntoProfile(
   pageUrl: string
 ): void {
   const runtimeEvidence = domComponents.map(component => domComponentToEvidence(component, pageUrl));
-  profile.components = mergeComponentEvidence(profile.components, runtimeEvidence, pageUrl);
+  profile.components = mergeComponentEvidence(profile.components, runtimeEvidence);
   profile.componentCategories = buildComponentCategories(profile.components);
 }
 
@@ -149,7 +152,7 @@ export function buildComponentCategories(
   return categories;
 }
 
-function seedComponentEvidence(component: ComponentInfo, pageUrl?: string): ComponentInfo {
+function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
   if (component.evidence?.length) {
     return {
       ...component,
@@ -164,8 +167,7 @@ function seedComponentEvidence(component: ComponentInfo, pageUrl?: string): Comp
     };
   }
 
-  const evidence = componentInfoToEvidence(component, pageUrl);
-  const pages = evidence.pageUrl ? [evidence.pageUrl] : component.pages;
+  const evidence = componentInfoToEvidence(component);
 
   return {
     ...component,
@@ -176,7 +178,7 @@ function seedComponentEvidence(component: ComponentInfo, pageUrl?: string): Comp
     statePatterns: [...component.statePatterns],
     tailwindPatterns: cloneTailwindPattern(component.tailwindPatterns),
     instances: component.instances ?? evidence.instances,
-    pages: pages ? [...pages] : undefined,
+    pages: component.pages ? [...component.pages] : undefined,
     confidence: component.confidence ?? evidence.confidence,
     evidence: [evidence],
   };
@@ -199,7 +201,7 @@ function findMatchingComponentIndex(
 
     if (component.category !== evidenceCategory) continue;
 
-    const genericKind = normalizeName(evidence.kindHint || '');
+    const genericKind = (evidence.kindHint || '').toLowerCase();
     if (genericKind && isGenericKindMatch(componentName, genericKind)) {
       const classOverlap = overlapRatio(component.cssClasses, evidence.classes);
       const componentIsGeneric = isGenericComponentName(componentName, genericKind);
@@ -276,7 +278,7 @@ function isGenericKindMatch(componentName: string, kind: string): boolean {
     'form-field': /^(input|field|formfield|select|textarea)$/,
     'list-item': /^(list|listitem|item|timeline)$/,
   };
-  return aliases[kind]?.test(componentName) ?? componentName === kind;
+  return aliases[kind]?.test(componentName) ?? componentName === normalizeName(kind);
 }
 
 function isGenericComponentName(componentName: string, kind: string): boolean {

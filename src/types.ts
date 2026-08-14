@@ -53,6 +53,40 @@ export type ComponentCategory =
   | 'media'
   | 'other';
 
+export type ComponentEvidenceSource = 'source-code' | 'http-dom' | 'runtime-dom';
+
+/**
+ * One independently observed piece of evidence that a UI component exists.
+ *
+ * Evidence is intentionally kept separate from ComponentInfo. Extractors can
+ * contribute observations without having to agree on the final component name
+ * or representation. The evidence pipeline is responsible for merging and
+ * deduplicating those observations into ComponentInfo records.
+ */
+export interface ComponentEvidence {
+  source: ComponentEvidenceSource;
+  pageUrl?: string;
+  selector?: string;
+  tag?: string;
+  role?: string;
+  nameHint?: string;
+  kindHint?: string;
+  categoryHint?: ComponentCategory;
+  classes: string[];
+  attributes?: {
+    ariaLabel?: string;
+    ariaRole?: string;
+    dataTestId?: string;
+  };
+  instances: number;
+  structureFingerprint: string;
+  styleFingerprint?: string;
+  htmlSnippet?: string;
+  /** Confidence in this individual observation, from 0 to 1. */
+  confidence: number;
+  reasons: string[];
+}
+
 export interface AnimationToken {
   name: string;
   type: 'css-keyframe' | 'css-transition' | 'framer-motion' | 'spring';
@@ -149,6 +183,14 @@ export interface ComponentInfo {
   animationDetails: string[];
   statePatterns: string[];
   tailwindPatterns: TailwindPattern;
+  /** Highest observed instance count for this component on one page. */
+  instances?: number;
+  /** Pages where runtime/HTTP evidence for this component was observed. */
+  pages?: string[];
+  /** Aggregate confidence from the strongest evidence, from 0 to 1. */
+  confidence?: number;
+  /** Provenance used to build this normalized component record. */
+  evidence?: ComponentEvidence[];
 }
 
 export interface TailwindPattern {

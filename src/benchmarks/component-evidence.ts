@@ -1,5 +1,9 @@
-import type { ComponentInfo, TailwindPattern } from '../types';
-import type { DOMComponent } from '../types-ultra';
+import type {
+  ComponentInfo,
+  ComponentStyleSnapshot,
+  TailwindPattern,
+} from '../types';
+import type { DOMComponent, InteractionRecord } from '../types-ultra';
 import {
   buildComponentCategories,
   domComponentToEvidence,
@@ -11,18 +15,22 @@ import {
   deriveDOMComponentName,
   type DOMCandidateSummary,
 } from '../extractors/ultra/component-classifier';
+import { attachInteractionsToDOMComponents } from '../extractors/ultra/component-interactions';
 
 /**
  * Deterministic baseline for component detection + evidence normalization.
  * Browser collection itself is integration-tested against real sites; semantic
- * classification and the merge/admission pipeline stay deterministic here.
+ * classification, measured-style propagation, state matching, and the
+ * merge/admission pipeline stay deterministic here.
  */
 function main(): void {
   const classifierCases = runClassifierBenchmark();
+  const measuredCases = runMeasuredStyleBenchmark();
   const pipeline = runEvidencePipelineBenchmark();
 
-  console.log('Runtime component detector benchmark');
+  console.log('Runtime component evidence benchmark');
   console.log(`  classifier cases:       ${classifierCases.passed}/${classifierCases.total}`);
+  console.log(`  style/state cases:      ${measuredCases.passed}/${measuredCases.total}`);
   console.log(`  raw runtime candidates: ${pipeline.rawEvidence}`);
   console.log(`  promoted candidates:    ${pipeline.promotedEvidence}`);
   console.log(`  normalized components:  ${pipeline.normalizedComponents}`);
@@ -175,6 +183,81 @@ function runClassifierBenchmark(): { passed: number; total: number } {
   return { passed, total: cases.length };
 }
 
+function runMeasuredStyleBenchmark(): { passed: number; total: number } {
+  const defaultStyle = styleSnapshot();
+  const hoverStyle = { ...defaultStyle, backgroundColor: 'rgb(20, 30, 40)', transform: 'matrix(1, 0, 0, 1, 0, -2)' };
+  const focusStyle = { ...defaultStyle, outline: 'rgb(255, 255, 255) solid 2px' };
+
+  const button: DOMComponent = {
+    name: 'Button',
+    pattern: 'button|role=|type=[Button_btn](span{})',
+    instances: 2,
+    commonClasses: ['Button_btn__abc'],
+    htmlSnippet: '<button class="Button_btn__abc">Play</button>',
+    category: 'button',
+    tag: 'button',
+    confidence: 0.98,
+    measuredStyle: defaultStyle,
+    styleFingerprint: 'button-style',
+  };
+  const card: DOMComponent = {
+    name: 'Server Card',
+    pattern: 'div|role=|type=[ServerCard_root](div{})',
+    instances: 4,
+    commonClasses: ['ServerCard_root__xyz'],
+    htmlSnippet: '<div class="ServerCard_root__xyz"></div>',
+    category: 'card',
+    tag: 'div',
+    confidence: 0.84,
+    measuredStyle: { ...defaultStyle, backgroundColor: 'rgb(8, 9, 10)' },
+    styleFingerprint: 'card-style',
+  };
+
+  const interaction: InteractionRecord = {
+    componentType: 'button',
+    label: 'Play',
+    selector: 'button:nth-of-type(1)',
+    index: 1,
+    nameHint: 'Button',
+    tag: 'button',
+    classes: ['Button_btn__abc', 'Button_blue__def'],
+    screenshots: {
+      default: 'screens/states/button-1-default.png',
+      hover: 'screens/states/button-1-hover.png',
+      focus: 'screens/states/button-1-focus.png',
+    },
+    defaultStyles: defaultStyle,
+    hoverStyles: hoverStyle,
+    focusStyles: focusStyle,
+    hoverChanges: [
+      { property: 'backgroundColor', from: defaultStyle.backgroundColor, to: hoverStyle.backgroundColor },
+      { property: 'transform', from: defaultStyle.transform, to: hoverStyle.transform },
+    ],
+    focusChanges: [
+      { property: 'outline', from: defaultStyle.outline, to: focusStyle.outline },
+    ],
+    transitionValue: defaultStyle.transition,
+  };
+
+  const enriched = attachInteractionsToDOMComponents([button, card], [interaction]);
+  const enrichedButton = enriched.find(component => component.name === 'Button');
+  const enrichedCard = enriched.find(component => component.name === 'Server Card');
+
+  let passed = 0;
+  expectEqual(enrichedButton?.measuredStyle?.backgroundColor, defaultStyle.backgroundColor, 'measured default style should survive state attachment'); passed++;
+  expectEqual(enrichedButton?.stateEvidence?.length, 2, 'hover and focus should attach to matching button'); passed++;
+  expectEqual(enrichedButton?.stateEvidence?.[0]?.screenshot, 'screens/states/button-1-hover.png', 'state screenshot provenance should survive matching'); passed++;
+  expectEqual(enrichedCard?.stateEvidence, undefined, 'unrelated card must not receive button interaction evidence'); passed++;
+
+  const evidence = domComponentToEvidence(enrichedButton!, 'https://fixture.local/');
+  expectEqual(evidence.measuredStyle?.fontFamily, defaultStyle.fontFamily, 'measured style should propagate into ComponentEvidence'); passed++;
+
+  const normalized = mergeComponentEvidence([], [evidence])[0];
+  expectEqual(normalized.stateEvidence?.length, 2, 'matched states should propagate into normalized ComponentInfo'); passed++;
+
+  return { passed, total: 6 };
+}
+
 function runEvidencePipelineBenchmark(): {
   rawEvidence: number;
   promotedEvidence: number;
@@ -307,6 +390,40 @@ function runEvidencePipelineBenchmark(): {
     evidenceRecords: merged.reduce((sum, item) => sum + (item.evidence?.length || 0), 0),
     precision,
     recall,
+  };
+}
+
+function styleSnapshot(): ComponentStyleSnapshot {
+  return {
+    backgroundColor: 'rgb(10, 10, 10)',
+    backgroundImage: 'none',
+    color: 'rgb(255, 255, 255)',
+    borderColor: 'rgb(60, 60, 60)',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderRadius: '8px',
+    padding: '8px 16px',
+    gap: '8px',
+    boxShadow: 'none',
+    textShadow: 'none',
+    opacity: '1',
+    transform: 'none',
+    filter: 'none',
+    outline: 'rgb(0, 0, 0) none 0px',
+    outlineColor: 'rgb(0, 0, 0)',
+    textDecoration: 'none solid rgb(255, 255, 255)',
+    transition: 'background-color 0.2s ease 0s',
+    fontFamily: 'Inter, sans-serif',
+    fontSize: '14px',
+    fontWeight: '600',
+    lineHeight: '20px',
+    letterSpacing: 'normal',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '120px',
+    height: '40px',
+    cursor: 'pointer',
   };
 }
 

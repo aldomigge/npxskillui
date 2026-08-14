@@ -7,6 +7,7 @@ import { runUrlMode } from './modes/url.js';
 import { runUltraMode } from './modes/ultra.js';
 import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
+import { finalizeGeneratedSkill } from './writers/skill-finalizer.js';
 import { configurePlaywrightBrowser } from './playwright-loader.js';
 import { installAgentIntegrations } from './agents/index.js';
 import { promptAgentTarget, showAgentLogo, showAgentResults } from './agents/ui.js';
@@ -196,7 +197,8 @@ program
       if (shouldWriteSkill) {
         const spSkill = startSpinner('Bundling .skill package...');
         try {
-          const result = await generateSkill(profile, designMdContent, path.resolve(opts.out), screenshotPath, ultraAnimations);
+          const generated = await generateSkill(profile, designMdContent, path.resolve(opts.out), screenshotPath, ultraAnimations);
+          const result = await finalizeGeneratedSkill(profile, generated);
           skillFilePath = result.skillFile;
           succeedSpinner(spSkill, '.skill package', skillFilePath);
 

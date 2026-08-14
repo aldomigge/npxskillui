@@ -17,6 +17,15 @@ export interface DOMClassification {
   minimumInstances: number;
 }
 
+interface ClassDescriptor {
+  raw: string;
+  stripped: string;
+  namespace?: string;
+  local: string;
+  namespaceWords: string[];
+  localWords: string[];
+}
+
 const INTERACTIVE_FORM_ROLES = new Set([
   'textbox',
   'searchbox',
@@ -29,27 +38,33 @@ const INTERACTIVE_FORM_ROLES = new Set([
 ]);
 
 const NAV_ITEM_ROLES = new Set(['menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'treeitem']);
+const STATE_STYLE_WORDS = new Set([
+  'active', 'disabled', 'selected', 'current', 'open', 'closed', 'hover', 'focus',
+  'primary', 'secondary', 'blue', 'yellow', 'red', 'green', 'dark', 'light', 'big',
+  'small', 'large', 'color', 'mobile', 'desktop', 'hidden', 'hide', 'show',
+]);
 
 /**
  * Classify a rendered DOM candidate using semantic HTML/ARIA first and class
- * naming only as secondary evidence. High-confidence semantic elements may be
- * retained even when they are unique; class/structure-only candidates still
- * require repetition.
+ * naming only as secondary evidence. CSS-module namespaces are context, not
+ * component semantics: RewardItemCard_name must not become a card merely
+ * because its namespace contains "Card".
  */
 export function classifyDOMCandidate(candidate: DOMCandidateSummary): DOMClassification {
   const tag = candidate.tag.toLowerCase();
   const role = (candidate.role || '').toLowerCase();
-  const normalizedClasses = candidate.classes.map(stripCssModuleHash);
-  const classWords = new Set(
-    normalizedClasses.flatMap(identifierWords).map(word => word.toLowerCase())
-  );
-  const hasClassWord = (...words: string[]): boolean => words.some(word => classWords.has(word));
+  const descriptors = candidate.classes.map(describeClass);
+  const localWords = new Set(descriptors.flatMap(item => item.localWords));
+  const namespaceWords = new Set(descriptors.flatMap(item => item.namespaceWords));
+  const hasLocalWord = (...words: string[]): boolean => words.some(word => localWords.has(word));
+  const hasNamespaceWord = (...words: string[]): boolean => words.some(word => namespaceWords.has(word));
   const ancestorTags = candidate.ancestorTags.map(value => value.toLowerCase());
   const ancestorRoles = candidate.ancestorRoles.map(value => value.toLowerCase());
   const insideNavigation = ancestorTags.includes('nav')
     || ancestorRoles.includes('navigation')
     || ancestorRoles.includes('menu')
-    || hasClassWord('navigation', 'nav', 'menu', 'tab', 'tabs');
+    || hasNamespaceWord('navigation', 'nav', 'menu', 'tab', 'tabs')
+    || hasLocalWord('navigation', 'nav', 'menu', 'tab', 'tabs');
 
   if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog') {
     return classification('dialog', 0.98, 1, [`semantic ${tag === 'dialog' ? '<dialog>' : `role=${role}`} evidence`]);
@@ -79,54 +94,63 @@ export function classifyDOMCandidate(candidate: DOMCandidateSummary): DOMClassif
     return classification('nav-item', 0.96, 1, [`semantic role=${role} evidence`]);
   }
 
-  // A link is only treated as navigation when context supports that meaning.
-  // This prevents every ordinary content link from becoming a canonical nav item.
   if (tag === 'a' && insideNavigation) {
     return classification('nav-item', 0.94, 1, ['anchor appears in navigation/menu context']);
   }
 
-  // Class semantics come after native/ARIA semantics. Specific chips/badges must
-  // win over generic list-item signals such as an enclosing <li>.
-  if (hasClassWord('badge', 'chip', 'pill', 'status', 'tag')) {
-    return classification('badge', 0.9, 1, ['semantic badge/chip class token']);
+  if (hasLocalWord('badge', 'chip', 'pill', 'status', 'tag')) {
+    return classification('badge', 0.9, 1, ['semantic badge/chip local class token']);
   }
 
   if (tag === 'li' && insideNavigation) {
     return classification('nav-item', 0.9, 1, ['list item appears in navigation/menu context']);
   }
 
+  if (tag === 'li' && candidate.classes.length === 0) {
+    return classification('unknown', 0.6, 3, ['classless <li> is structural evidence without reusable component identity']);
+  }
+
   if (tag === 'li') {
-    return classification('list-item', 0.86, 3, ['semantic <li> evidence; repetition required for generic list items']);
+    return classification('list-item', 0.8, 3, ['classed <li> evidence; repetition required']);
   }
 
-  if ((classWords.has('list') && classWords.has('item'))
-    || (classWords.has('timeline') && classWords.has('item'))) {
-    return classification('list-item', 0.84, 3, ['semantic list-item class token']);
+  if ((localWords.has('list') && localWords.has('item'))
+    || (localWords.has('timeline') && localWords.has('item'))) {
+    return classification('list-item', 0.84, 3, ['semantic list-item local class token']);
   }
 
-  // Deliberately avoid the old generic /item/ card rule. "item" is far too
-  // broad and was the reason navigation entries were classified as cards.
-  if (hasClassWord('card', 'tile', 'panel')) {
-    return classification('card', 0.84, 3, ['semantic card/tile/panel class token']);
+  if (hasLocalWord('card', 'tile', 'panel') || hasCardNamespaceRoot(descriptors)) {
+    return classification('card', 0.84, 3, ['semantic card/tile/panel component-root evidence']);
   }
 
-  if (hasClassWord('btn', 'button')) {
-    return classification('button', 0.82, 3, ['button-like class token']);
+  if (hasLocalWord('btn', 'button')) {
+    return classification('button', 0.82, 3, ['button-like local class token']);
   }
 
-  if (hasClassWord('field', 'input') || (classWords.has('form') && classWords.has('field'))) {
-    return classification('form-field', 0.82, 3, ['form-field-like class token']);
+  if (hasLocalWord('field', 'input') || (localWords.has('form') && localWords.has('field'))) {
+    return classification('form-field', 0.82, 3, ['form-field-like local class token']);
   }
 
   return classification('unknown', 0.55, 3, ['repeated structural pattern without strong semantic evidence']);
 }
 
+/**
+ * Pick the class that best represents component identity rather than whichever
+ * class sorts first. This collapses state/style variants such as Button_blue +
+ * Button_btn to the stable component name Button, while HeaderNavigation_item
+ * remains Header Navigation Item.
+ */
 export function deriveDOMComponentName(candidate: DOMCandidateSummary): string {
-  const semanticClass = candidate.classes
-    .map(stripCssModuleHash)
-    .find(value => !isUtilityClass(value));
+  const category = classifyDOMCandidate(candidate).category;
+  const descriptors = candidate.classes
+    .map(describeClass)
+    .filter(item => !isUtilityClass(item.stripped));
 
-  if (semanticClass) return humanizeIdentifier(semanticClass);
+  const semanticClass = descriptors
+    .map((descriptor, index) => ({ descriptor, index, score: scoreNameClass(descriptor, category) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.descriptor;
+
+  if (semanticClass) return humanizeClassDescriptor(semanticClass);
 
   const role = (candidate.role || '').toLowerCase();
   if (role && role !== 'presentation' && role !== 'none') {
@@ -147,12 +171,81 @@ export function deriveDOMComponentName(candidate: DOMCandidateSummary): string {
   return humanizeIdentifier(tag || 'Runtime Component');
 }
 
-/** Strip CSS-module hash suffixes while preserving the semantic namespace. */
+/** Strip CSS-module hash suffixes while preserving namespace + local token. */
 export function stripCssModuleHash(value: string): string {
   return value
     .replace(/___[-A-Za-z0-9]{4,}$/g, '')
     .replace(/__[-A-Za-z0-9]{4,}$/g, '')
     .trim();
+}
+
+function describeClass(raw: string): ClassDescriptor {
+  const stripped = stripCssModuleHash(raw);
+  const moduleSeparator = stripped.indexOf('_');
+  const namespace = moduleSeparator > 0 ? stripped.slice(0, moduleSeparator) : undefined;
+  const local = moduleSeparator > 0 ? stripped.slice(moduleSeparator + 1) : stripped;
+
+  return {
+    raw,
+    stripped,
+    namespace,
+    local,
+    namespaceWords: namespace ? identifierWords(namespace).map(word => word.toLowerCase()) : [],
+    localWords: identifierWords(local).map(word => word.toLowerCase()),
+  };
+}
+
+function hasCardNamespaceRoot(descriptors: ClassDescriptor[]): boolean {
+  return descriptors.some(descriptor => {
+    const namespaceHasCard = descriptor.namespaceWords.includes('card');
+    const localIsRoot = descriptor.localWords.some(word => ['root', 'item', 'container', 'wrapper'].includes(word));
+    return namespaceHasCard && localIsRoot;
+  });
+}
+
+function scoreNameClass(descriptor: ClassDescriptor, category: DOMComponent['category']): number {
+  const words = new Set(descriptor.localWords);
+  let score = descriptor.namespace ? 10 : 0;
+
+  const preferredByCategory: Partial<Record<DOMComponent['category'], string[]>> = {
+    button: ['button', 'btn'],
+    'nav-item': ['item', 'link', 'tab', 'menuitem'],
+    navigation: ['nav', 'navigation', 'menu'],
+    badge: ['badge', 'chip', 'pill', 'status', 'tag'],
+    'form-field': ['input', 'field', 'select', 'textarea'],
+    card: ['card', 'tile', 'panel', 'item', 'root'],
+    'list-item': ['item', 'list', 'timeline'],
+    table: ['table', 'grid'],
+    dialog: ['dialog', 'modal'],
+  };
+
+  if (preferredByCategory[category]?.some(word => words.has(word))) score += 100;
+  if ([...words].some(word => STATE_STYLE_WORDS.has(word))) score -= 35;
+  if (descriptor.localWords.length === 1 && ['root', 'wrapper', 'container'].includes(descriptor.localWords[0])) score -= 10;
+  return score;
+}
+
+function humanizeClassDescriptor(descriptor: ClassDescriptor): string {
+  if (!descriptor.namespace) return humanizeIdentifier(descriptor.local);
+
+  const namespaceWords = identifierWords(descriptor.namespace);
+  const localWords = identifierWords(descriptor.local);
+  const namespaceLast = normalizeGenericWord(namespaceWords[namespaceWords.length - 1] || '');
+  const localFirst = normalizeGenericWord(localWords[0] || '');
+
+  if (localWords.length === 1 && namespaceLast && namespaceLast === localFirst) {
+    return humanizeWords(namespaceWords);
+  }
+
+  return humanizeWords([...namespaceWords, ...localWords]);
+}
+
+function normalizeGenericWord(value: string): string {
+  const word = value.toLowerCase();
+  if (word === 'btn') return 'button';
+  if (word === 'nav') return 'navigation';
+  if (word === 'lbl') return 'label';
+  return word;
 }
 
 function classification(
@@ -177,7 +270,11 @@ function identifierWords(value: string): string[] {
 }
 
 function humanizeIdentifier(value: string): string {
-  return identifierWords(value)
+  return humanizeWords(identifierWords(value));
+}
+
+function humanizeWords(words: string[]): string {
+  return words
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }

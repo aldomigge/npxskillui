@@ -1,11 +1,17 @@
 import { DOMComponent } from '../types-ultra';
-import { DesignProfile } from '../types';
+import type {
+  ComponentInfo,
+  ComponentStateEvidence,
+  ComponentStyleSnapshot,
+  DesignProfile,
+} from '../types';
 
 /**
  * Generate references/COMPONENTS.md
  *
- * Keeps two evidence layers explicit:
+ * Keeps evidence layers explicit:
  * - canonical components promoted into DesignProfile
+ * - measured runtime styles/states attached to canonical components
  * - raw runtime DOM candidates emitted by the detector
  */
 export function generateComponentsMd(
@@ -14,6 +20,7 @@ export function generateComponentsMd(
 ): string {
   let md = `# Component Reference\n\n`;
   md += `> Canonical components are observations promoted into the normalized design profile.\n`;
+  md += `> Measured styles are computed from representative rendered instances and outrank token-derived recipes.\n`;
   md += `> Raw runtime DOM candidates are detector observations for inspection; they are not automatically canonical components.\n\n`;
 
   // ── Canonical inventory ─────────────────────────────────────────────
@@ -23,8 +30,8 @@ export function generateComponentsMd(
     md += `No component observations were promoted into the canonical design profile.\n\n`;
   } else {
     md += `These are the component records that downstream DESIGN.md / SKILL.md guidance may treat as extracted component evidence.\n\n`;
-    md += `| Component | Category | Confidence | Instances | Evidence Sources |\n`;
-    md += `|-----------|----------|------------|-----------|------------------|\n`;
+    md += `| Component | Category | Confidence | Instances | Measured | States | Evidence Sources |\n`;
+    md += `|-----------|----------|------------|-----------|----------|--------|------------------|\n`;
 
     for (const component of profile.components) {
       const confidence = component.confidence != null
@@ -34,10 +41,25 @@ export function generateComponentsMd(
       const sources = component.evidence?.length
         ? [...new Set(component.evidence.map(e => e.source))].join(', ')
         : inferLegacySource(component.filePath);
+      const measured = component.measuredStyle ? 'yes' : 'no';
+      const states = component.stateEvidence?.length
+        ? [...new Set(component.stateEvidence.map(state => state.state))].join(', ')
+        : 'none';
 
-      md += `| **${component.name}** | ${component.category} | ${confidence} | ${instances} | ${sources} |\n`;
+      md += `| **${component.name}** | ${component.category} | ${confidence} | ${instances} | ${measured} | ${states} | ${sources} |\n`;
     }
     md += `\n`;
+  }
+
+  // ── Canonical measured styles ────────────────────────────────────────
+  const measuredCanonical = profile.components.filter(component => component.measuredStyle);
+  if (measuredCanonical.length > 0) {
+    md += `## Canonical Measured Component Styles\n\n`;
+    md += `> Values below come from \`getComputedStyle()\` on representative runtime instances. Use these before any token-derived recipe. Width/height are observed geometry at the extraction viewport, not fixed implementation requirements.\n\n`;
+
+    for (const component of measuredCanonical) {
+      md += renderCanonicalMeasuredComponent(component);
+    }
   }
 
   // ── Raw runtime-DOM inventory ───────────────────────────────────────
@@ -49,15 +71,19 @@ export function generateComponentsMd(
     return md;
   }
 
-  md += `| Candidate | Detector Category | Confidence | Instances | Semantic | Key Classes |\n`;
-  md += `|-----------|-------------------|------------|-----------|----------|-------------|\n`;
+  md += `| Candidate | Detector Category | Confidence | Instances | Measured | States | Semantic | Key Classes |\n`;
+  md += `|-----------|-------------------|------------|-----------|----------|--------|----------|-------------|\n`;
   for (const component of domComponents) {
     const classes = component.commonClasses.slice(0, 3).map(className => `\`.${className}\``).join(', ');
     const confidence = component.confidence != null ? `${Math.round(component.confidence * 100)}%` : 'n/a';
     const semantic = [component.tag ? `<${component.tag}>` : '', component.role ? `role=${component.role}` : '']
       .filter(Boolean)
       .join(' / ') || 'class/structure';
-    md += `| **${component.name}** | ${component.category} | ${confidence} | ${component.instances}× | ${semantic} | ${classes} |\n`;
+    const measured = component.measuredStyle ? 'yes' : 'no';
+    const states = component.stateEvidence?.length
+      ? [...new Set(component.stateEvidence.map(state => state.state))].join(', ')
+      : 'none';
+    md += `| **${component.name}** | ${component.category} | ${confidence} | ${component.instances}× | ${measured} | ${states} | ${semantic} | ${classes} |\n`;
   }
   md += `\n`;
 
@@ -103,14 +129,21 @@ export function generateComponentsMd(
       md += `${component.htmlSnippet}\n`;
       md += `\`\`\`\n\n`;
 
-      const suggestedCss = buildSuggestedCss(component, {
-        accent, bg, surface, border, textPrimary, commonRadius, profile
-      });
-      if (suggestedCss) {
-        md += `**Token-derived implementation starting point (not measured component styles):**\n\n`;
-        md += `\`\`\`css\n`;
-        md += suggestedCss;
-        md += `\`\`\`\n\n`;
+      if (component.measuredStyle) {
+        md += `**Measured default style (representative runtime instance):**\n\n`;
+        md += renderMeasuredStyleBlock(component.measuredStyle);
+        md += `**Observed geometry:** ${component.measuredStyle.width} × ${component.measuredStyle.height}\n\n`;
+        md += renderStates(component.stateEvidence);
+      } else {
+        const suggestedCss = buildSuggestedCss(component, {
+          accent, bg, surface, border, textPrimary, commonRadius, profile
+        });
+        if (suggestedCss) {
+          md += `**Token-derived implementation starting point (measured runtime style unavailable):**\n\n`;
+          md += `\`\`\`css\n`;
+          md += suggestedCss;
+          md += `\`\`\`\n\n`;
+        }
       }
     }
   }
@@ -118,15 +151,86 @@ export function generateComponentsMd(
   // ── Evidence Rules ──────────────────────────────────────────────────
   md += `## Component Evidence Rules\n\n`;
   md += `- Treat the **Canonical Components** table as the normalized component inventory.\n`;
+  md += `- **Measured component styles and matched hover/focus states outrank token-derived recipes.**\n`;
+  md += `- Width/height measurements describe the observed extraction viewport; do not blindly hard-code them.\n`;
   md += `- Treat **Raw Runtime DOM Candidates** as detector evidence, not proof that every candidate is a reusable component.\n`;
   md += `- Native HTML and explicit ARIA semantics outrank class-name guesses.\n`;
   md += `- Utility wrappers and unclassified substructures may remain in the raw inventory without being promoted.\n`;
   md += `- Use raw HTML/classes to validate canonical components and screenshot structure; do not promote a raw candidate by assumption.\n`;
-  md += `- Token-derived CSS shown for raw candidates is fallback guidance, not measured source styling.\n`;
+  md += `- Token-derived CSS is fallback guidance only when measured runtime styling is unavailable.\n`;
   if (border) md += `- Extracted border token: \`${border.hex}\`.\n`;
   if (accent) md += `- Extracted accent token: \`${accent.hex}\`.\n`;
   md += `\n`;
 
+  return md;
+}
+
+function renderCanonicalMeasuredComponent(component: ComponentInfo): string {
+  if (!component.measuredStyle) return '';
+
+  let md = `### ${component.name}\n\n`;
+  md += `**Measured default style:**\n\n`;
+  md += renderMeasuredStyleBlock(component.measuredStyle);
+  md += `**Observed geometry:** ${component.measuredStyle.width} × ${component.measuredStyle.height}\n\n`;
+  md += renderStates(component.stateEvidence);
+  return md;
+}
+
+function renderMeasuredStyleBlock(style: ComponentStyleSnapshot): string {
+  const properties: Array<[string, string, boolean]> = [
+    ['background-color', style.backgroundColor, style.backgroundColor !== 'rgba(0, 0, 0, 0)'],
+    ['background-image', style.backgroundImage, style.backgroundImage !== 'none'],
+    ['color', style.color, true],
+    ['border-color', style.borderColor, style.borderWidth !== '0px'],
+    ['border-style', style.borderStyle, style.borderWidth !== '0px'],
+    ['border-width', style.borderWidth, style.borderWidth !== '0px'],
+    ['border-radius', style.borderRadius, style.borderRadius !== '0px'],
+    ['padding', style.padding, style.padding !== '0px'],
+    ['gap', style.gap, style.gap !== 'normal' && style.gap !== '0px'],
+    ['box-shadow', style.boxShadow, style.boxShadow !== 'none'],
+    ['text-shadow', style.textShadow, style.textShadow !== 'none'],
+    ['opacity', style.opacity, style.opacity !== '1'],
+    ['transform', style.transform, style.transform !== 'none'],
+    ['filter', style.filter, style.filter !== 'none'],
+    ['outline', style.outline, style.outline !== 'none' && !style.outline.startsWith('rgb(0, 0, 0) 0px')],
+    ['font-family', style.fontFamily, true],
+    ['font-size', style.fontSize, true],
+    ['font-weight', style.fontWeight, true],
+    ['line-height', style.lineHeight, true],
+    ['letter-spacing', style.letterSpacing, style.letterSpacing !== 'normal'],
+    ['display', style.display, true],
+    ['align-items', style.alignItems, style.alignItems !== 'normal'],
+    ['justify-content', style.justifyContent, style.justifyContent !== 'normal'],
+    ['cursor', style.cursor, style.cursor !== 'auto'],
+    ['transition', style.transition, style.transition !== 'all 0s ease 0s' && style.transition !== 'none'],
+  ];
+
+  let css = `\`\`\`css\n`;
+  for (const [property, value, include] of properties) {
+    if (include && value) css += `${property}: ${value};\n`;
+  }
+  css += `\`\`\`\n\n`;
+  return css;
+}
+
+function renderStates(states?: ComponentStateEvidence[]): string {
+  if (!states?.length) return '';
+
+  let md = `**Matched interaction states:**\n\n`;
+  for (const state of states) {
+    const label = state.label ? ` — ${state.label}` : '';
+    md += `- **${state.state}${label}**`;
+    if (state.screenshot) md += ` — screenshot: \`../${state.screenshot}\``;
+    md += `\n`;
+    if (state.changes.length > 0) {
+      md += `\n  \`\`\`css\n`;
+      for (const change of state.changes) {
+        md += `  /* ${toCssProperty(change.property)}: ${change.from} → */ ${toCssProperty(change.property)}: ${change.to};\n`;
+      }
+      md += `  \`\`\`\n`;
+    }
+  }
+  md += `\n`;
   return md;
 }
 
@@ -220,6 +324,10 @@ function formatCategory(category: string): string {
     unknown: 'Other Candidates',
   };
   return map[category] || category;
+}
+
+function toCssProperty(camelCase: string): string {
+  return camelCase.replace(/([A-Z])/g, '-$1').toLowerCase();
 }
 
 function groupBy<T>(arr: T[], key: (item: T) => string): Record<string, T[]> {

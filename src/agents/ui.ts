@@ -5,6 +5,19 @@ import type { DesignProfile } from '../types';
 import type { FullAnimationResult } from '../types-ultra';
 import type { AgentTarget } from './types';
 
+export async function showAgentLogo(): Promise<void> {
+  const { renderFilled } = await import('oh-my-logo');
+  console.log('');
+  await renderFilled('SKILLUI', {
+    palette: ['#e8735a', '#d05a34', '#c04a28'],
+    font: 'block',
+    letterSpacing: 1,
+  });
+  console.log('');
+  console.log('   ' + chalk.dim('Reverse-engineer design systems into reusable Claude Code and Codex skills.'));
+  console.log('');
+}
+
 export async function promptAgentTarget(initial: AgentTarget = 'claude'): Promise<AgentTarget> {
   const prompts = (await import('prompts')).default;
   const answer = await prompts({

@@ -56,6 +56,18 @@ function main(): void {
       htmlSnippet: '<div class="ornament-cluster"><span></span><span></span></div>',
       category: 'unknown',
     },
+    {
+      name: 'Flex A Center ABC',
+      pattern: 'div[Flex_a-center.Flex_flex.HeaderServerSelector_server-item](img,div)',
+      instances: 3,
+      commonClasses: [
+        'Flex_a-center__abc',
+        'Flex_flex__def',
+        'HeaderServerSelector_server-item__ghi',
+      ],
+      htmlSnippet: '<div class="Flex_a-center__abc Flex_flex__def HeaderServerSelector_server-item__ghi"></div>',
+      category: 'card',
+    },
   ];
 
   const rawEvidence = runtime.map(item => domComponentToEvidence(item, pageUrl));
@@ -63,9 +75,9 @@ function main(): void {
   const merged = mergeComponentEvidence(existing, promotableEvidence);
   const categories = buildComponentCategories(merged);
 
-  expectEqual(rawEvidence.length, 4, 'all runtime observations should remain available as raw evidence');
-  expectEqual(promotableEvidence.length, 3, 'unknown runtime structures must not become canonical components');
-  expectEqual(merged.length, 3, 'runtime Button must merge with the HTTP Button and unknown candidates stay out');
+  expectEqual(rawEvidence.length, 5, 'all runtime observations should remain available as raw evidence');
+  expectEqual(promotableEvidence.length, 3, 'unknown and utility wrapper runtime structures must stay non-canonical');
+  expectEqual(merged.length, 3, 'runtime Button must merge with HTTP evidence while non-canonical candidates stay out');
 
   const button = merged.find(item => item.name === 'Button');
   expect(button, 'Button should remain in the normalized component set');
@@ -89,6 +101,9 @@ function main(): void {
 
   const unknown = merged.find(item => item.name === 'Decorative Cluster');
   expectEqual(unknown, undefined, 'unknown runtime structures must remain raw candidates only');
+
+  const utilityWrapper = merged.find(item => item.name === 'Flex A Center ABC');
+  expectEqual(utilityWrapper, undefined, 'layout utility wrappers must remain raw candidates only');
 
   expect(categories['data-input'].includes('Button'), 'component categories should include Button');
   expect(categories['data-display'].includes('Server Card'), 'component categories should include Server Card');

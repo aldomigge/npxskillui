@@ -6,15 +6,15 @@ import { DesignProfile } from '../types';
  *
  * Keeps two evidence layers explicit:
  * - canonical components promoted into DesignProfile
- * - raw repeated DOM candidates emitted by the Ultra structural detector
+ * - raw runtime DOM candidates emitted by the detector
  */
 export function generateComponentsMd(
   domComponents: DOMComponent[],
   profile: DesignProfile
 ): string {
   let md = `# Component Reference\n\n`;
-  md += `> Canonical components are the observations promoted into the normalized design profile.\n`;
-  md += `> Raw repeated DOM candidates are structural observations for inspection; they are not automatically canonical components.\n\n`;
+  md += `> Canonical components are observations promoted into the normalized design profile.\n`;
+  md += `> Raw runtime DOM candidates are detector observations for inspection; they are not automatically canonical components.\n\n`;
 
   // ── Canonical inventory ─────────────────────────────────────────────
   md += `## Canonical Components\n\n`;
@@ -40,61 +40,70 @@ export function generateComponentsMd(
     md += `\n`;
   }
 
-  // ── Raw repeated-DOM inventory ──────────────────────────────────────
-  md += `## Raw Repeated DOM Candidates\n\n`;
-  md += `> Structural patterns below appeared 3+ times in the rendered DOM. They remain useful evidence even when the promotion policy rejects them as wrappers, substructures, or low-confidence candidates.\n\n`;
+  // ── Raw runtime-DOM inventory ───────────────────────────────────────
+  md += `## Raw Runtime DOM Candidates\n\n`;
+  md += `> High-confidence semantic HTML/ARIA observations may appear once. Structural/class-only candidates require repetition. Raw candidates remain evidence even when the promotion policy rejects them.\n\n`;
 
   if (domComponents.length === 0) {
-    md += `No repeated DOM candidates detected (Playwright required).\n`;
+    md += `No runtime DOM candidates detected (Playwright required).\n`;
     return md;
   }
 
-  md += `| Candidate | Detector Category | Instances | Key Classes |\n`;
-  md += `|-----------|-------------------|-----------|-------------|\n`;
-  for (const c of domComponents) {
-    const classes = c.commonClasses.slice(0, 3).map(cl => `\`.${cl}\``).join(', ');
-    md += `| **${c.name}** | ${c.category} | ${c.instances}× | ${classes} |\n`;
+  md += `| Candidate | Detector Category | Confidence | Instances | Semantic | Key Classes |\n`;
+  md += `|-----------|-------------------|------------|-----------|----------|-------------|\n`;
+  for (const component of domComponents) {
+    const classes = component.commonClasses.slice(0, 3).map(className => `\`.${className}\``).join(', ');
+    const confidence = component.confidence != null ? `${Math.round(component.confidence * 100)}%` : 'n/a';
+    const semantic = [component.tag ? `<${component.tag}>` : '', component.role ? `role=${component.role}` : '']
+      .filter(Boolean)
+      .join(' / ') || 'class/structure';
+    md += `| **${component.name}** | ${component.category} | ${confidence} | ${component.instances}× | ${semantic} | ${classes} |\n`;
   }
   md += `\n`;
 
   // ── Category Groups ─────────────────────────────────────────────────
-  const byCategory = groupBy(domComponents, c => c.category);
+  const byCategory = groupBy(domComponents, component => component.category);
   const categoryOrder: DOMComponent['category'][] = [
-    'card', 'list-item', 'nav-item', 'button', 'badge', 'form-field', 'unknown'
+    'navigation', 'nav-item', 'button', 'form-field', 'dialog', 'table',
+    'badge', 'card', 'list-item', 'unknown'
   ];
 
-  const accent = profile.colors.find(c => c.role === 'accent');
-  const bg = profile.colors.find(c => c.role === 'background');
-  const surface = profile.colors.find(c => c.role === 'surface');
-  const border = profile.colors.find(c => c.role === 'border');
-  const textPrimary = profile.colors.find(c => c.role === 'text-primary');
-  const commonRadius = profile.borderRadius.filter(r => !r.includes('9999'))[
+  const accent = profile.colors.find(color => color.role === 'accent');
+  const bg = profile.colors.find(color => color.role === 'background');
+  const surface = profile.colors.find(color => color.role === 'surface');
+  const border = profile.colors.find(color => color.role === 'border');
+  const textPrimary = profile.colors.find(color => color.role === 'text-primary');
+  const commonRadius = profile.borderRadius.filter(radius => !radius.includes('9999'))[
     Math.floor(profile.borderRadius.length / 2)
   ] || '8px';
 
   for (const category of categoryOrder) {
-    const comps = byCategory[category];
-    if (!comps?.length) continue;
+    const components = byCategory[category];
+    if (!components?.length) continue;
 
     md += `## Raw ${formatCategory(category)}\n\n`;
 
-    for (const comp of comps) {
-      md += `### ${comp.name}\n\n`;
-      md += `**Instances found:** ${comp.instances}\n\n`;
-
-      if (comp.commonClasses.length > 0) {
-        md += `**CSS classes:** ${comp.commonClasses.map(c => `\`.${c}\``).join(' ')}\n\n`;
+    for (const component of components) {
+      md += `### ${component.name}\n\n`;
+      md += `**Instances found:** ${component.instances}\n\n`;
+      if (component.confidence != null) md += `**Detector confidence:** ${Math.round(component.confidence * 100)}%\n\n`;
+      if (component.tag || component.role) {
+        md += `**Semantic evidence:** ${component.tag ? `\`<${component.tag}>\`` : ''}${component.tag && component.role ? ', ' : ''}${component.role ? `\`role=${component.role}\`` : ''}\n\n`;
+      }
+      if (component.reasons?.length) {
+        md += `**Why classified this way:** ${component.reasons.join('; ')}\n\n`;
       }
 
-      // HTML snippet
+      if (component.commonClasses.length > 0) {
+        md += `**CSS classes:** ${component.commonClasses.map(className => `\`.${className}\``).join(' ')}\n\n`;
+      }
+
       md += `**HTML structure:**\n\n`;
       md += `\`\`\`html\n`;
-      md += `${comp.htmlSnippet}\n`;
+      md += `${component.htmlSnippet}\n`;
       md += `\`\`\`\n\n`;
 
-      // Suggested base CSS from design tokens. This is intentionally labeled
-      // as synthesized guidance rather than measured component styling.
-      const suggestedCss = buildSuggestedCss(comp, {
+      const suggestedCss = buildSuggestedCss(component, {
         accent, bg, surface, border, textPrimary, commonRadius, profile
       });
       if (suggestedCss) {
@@ -109,16 +118,13 @@ export function generateComponentsMd(
   // ── Evidence Rules ──────────────────────────────────────────────────
   md += `## Component Evidence Rules\n\n`;
   md += `- Treat the **Canonical Components** table as the normalized component inventory.\n`;
-  md += `- Treat **Raw Repeated DOM Candidates** as structural evidence, not proof that each candidate is a reusable component.\n`;
+  md += `- Treat **Raw Runtime DOM Candidates** as detector evidence, not proof that every candidate is a reusable component.\n`;
+  md += `- Native HTML and explicit ARIA semantics outrank class-name guesses.\n`;
   md += `- Utility wrappers and unclassified substructures may remain in the raw inventory without being promoted.\n`;
   md += `- Use raw HTML/classes to validate canonical components and screenshot structure; do not promote a raw candidate by assumption.\n`;
   md += `- Token-derived CSS shown for raw candidates is fallback guidance, not measured source styling.\n`;
-  if (border) {
-    md += `- Extracted border token: \`${border.hex}\`.\n`;
-  }
-  if (accent) {
-    md += `- Extracted accent token: \`${accent.hex}\`.\n`;
-  }
+  if (border) md += `- Extracted border token: \`${border.hex}\`.\n`;
+  if (accent) md += `- Extracted accent token: \`${accent.hex}\`.\n`;
   md += `\n`;
 
   return md;
@@ -134,17 +140,18 @@ interface TokenSet {
   profile: DesignProfile;
 }
 
-function buildSuggestedCss(comp: DOMComponent, tokens: TokenSet): string {
+function buildSuggestedCss(component: DOMComponent, tokens: TokenSet): string {
   const { accent, surface, border, textPrimary, commonRadius, profile } = tokens;
-  const sp = profile.spacing;
-  const pad = sp.base * 2;
+  const spacing = profile.spacing;
+  const pad = spacing.base * 2;
 
   const lines: string[] = [];
-  const mainClass = comp.commonClasses[0] || comp.name.toLowerCase().replace(/\s+/g, '-');
+  const mainClass = component.commonClasses[0] || component.name.toLowerCase().replace(/\s+/g, '-');
   lines.push(`.${mainClass} {`);
 
-  switch (comp.category) {
+  switch (component.category) {
     case 'card':
+    case 'dialog':
       if (surface) lines.push(`  background: ${surface.hex};`);
       if (border) lines.push(`  border: 1px solid ${border.hex};`);
       lines.push(`  border-radius: ${commonRadius};`);
@@ -155,7 +162,7 @@ function buildSuggestedCss(comp: DOMComponent, tokens: TokenSet): string {
       if (accent) lines.push(`  background: ${accent.hex};`);
       if (textPrimary) lines.push(`  color: ${textPrimary.hex};`);
       lines.push(`  border-radius: ${commonRadius};`);
-      lines.push(`  padding: ${sp.base}px ${pad}px;`);
+      lines.push(`  padding: ${spacing.base}px ${pad}px;`);
       lines.push(`  cursor: pointer;`);
       break;
 
@@ -163,24 +170,30 @@ function buildSuggestedCss(comp: DOMComponent, tokens: TokenSet): string {
       if (surface) lines.push(`  background: ${surface.hex};`);
       if (border) lines.push(`  border: 1px solid ${border.hex};`);
       lines.push(`  border-radius: ${commonRadius};`);
-      lines.push(`  padding: ${Math.round(sp.base * 0.5)}px ${sp.base}px;`);
+      lines.push(`  padding: ${Math.round(spacing.base * 0.5)}px ${spacing.base}px;`);
       lines.push(`  font-size: 12px;`);
       break;
 
+    case 'navigation':
     case 'nav-item':
-      lines.push(`  padding: ${sp.base}px ${pad}px;`);
-      lines.push(`  cursor: pointer;`);
+      lines.push(`  padding: ${spacing.base}px ${pad}px;`);
+      if (component.category === 'nav-item') lines.push(`  cursor: pointer;`);
       if (accent) lines.push(`  /* active: color: ${accent.hex}; */`);
       break;
 
     case 'list-item':
-      lines.push(`  padding: ${sp.base}px 0;`);
+      lines.push(`  padding: ${spacing.base}px 0;`);
       if (border) lines.push(`  border-bottom: 1px solid ${border.hex};`);
+      break;
+
+    case 'table':
+      lines.push(`  width: 100%;`);
+      if (border) lines.push(`  border-color: ${border.hex};`);
       break;
 
     default:
       if (surface) lines.push(`  background: ${surface.hex};`);
-      lines.push(`  padding: ${sp.base}px;`);
+      lines.push(`  padding: ${spacing.base}px;`);
   }
 
   lines.push(`}`);
@@ -193,24 +206,27 @@ function inferLegacySource(filePath: string): string {
   return 'source-code';
 }
 
-function formatCategory(cat: string): string {
+function formatCategory(category: string): string {
   const map: Record<string, string> = {
-    card: 'Cards',
-    'list-item': 'List Items',
+    navigation: 'Navigation Containers',
     'nav-item': 'Navigation Items',
     button: 'Buttons',
-    badge: 'Badges & Chips',
     'form-field': 'Form Fields',
+    dialog: 'Dialogs',
+    table: 'Tables',
+    badge: 'Badges & Chips',
+    card: 'Cards',
+    'list-item': 'List Items',
     unknown: 'Other Candidates',
   };
-  return map[cat] || cat;
+  return map[category] || category;
 }
 
 function groupBy<T>(arr: T[], key: (item: T) => string): Record<string, T[]> {
   return arr.reduce((acc, item) => {
-    const k = key(item);
-    if (!acc[k]) acc[k] = [];
-    acc[k].push(item);
+    const group = key(item);
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(item);
     return acc;
   }, {} as Record<string, T[]>);
 }

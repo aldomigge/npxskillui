@@ -11,14 +11,29 @@ export function installCodexIntegration(context: AgentIntegrationContext): boole
     const source = path.resolve(context.skillDir);
     const destination = path.resolve(destDir);
 
-    // If the caller already chose .agents/skills as --out, the generated skill
-    // is already in the location Codex discovers automatically.
-    if (source === destination) return true;
+    if (source !== destination) {
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.cpSync(source, destination, { recursive: true, force: true });
+    }
 
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.cpSync(source, destination, { recursive: true, force: true });
+    normalizeCodexSkillFrontmatter(path.join(destination, 'SKILL.md'), context.skillFolderName);
     return true;
   } catch {
     return false;
   }
+}
+
+function normalizeCodexSkillFrontmatter(skillMdPath: string, skillFolderName: string): void {
+  if (!fs.existsSync(skillMdPath)) return;
+
+  const safeName = skillFolderName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 64);
+
+  const content = fs.readFileSync(skillMdPath, 'utf-8');
+  const normalized = content.replace(/^name:\s*.*$/m, `name: ${safeName}`);
+  fs.writeFileSync(skillMdPath, normalized, 'utf-8');
 }

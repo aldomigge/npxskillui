@@ -174,8 +174,8 @@ export function deriveDOMComponentName(candidate: DOMCandidateSummary): string {
 /** Strip CSS-module hash suffixes while preserving namespace + local token. */
 export function stripCssModuleHash(value: string): string {
   return value
-    .replace(/___[-A-Za-z0-9]{4,}$/g, '')
-    .replace(/__[-A-Za-z0-9]{4,}$/g, '')
+    .replace(/___[-A-Za-z0-9_]{4,}$/g, '')
+    .replace(/__[-A-Za-z0-9_]{4,}$/g, '')
     .trim();
 }
 

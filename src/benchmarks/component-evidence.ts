@@ -4,6 +4,7 @@ import {
   buildComponentCategories,
   domComponentToEvidence,
   mergeComponentEvidence,
+  shouldPromoteRuntimeEvidence,
 } from '../extractors/component-evidence';
 
 /**
@@ -11,7 +12,7 @@ import {
  *
  * This benchmark intentionally does not exercise browser heuristics. It locks
  * down the architecture introduced in PR #4 so detector improvements can be
- * measured later without regressing provenance or deduplication behavior.
+ * measured later without regressing provenance, promotion, or deduplication.
  */
 function main(): void {
   const pageUrl = 'https://fixture.local/';
@@ -57,11 +58,14 @@ function main(): void {
     },
   ];
 
-  const evidence = runtime.map(item => domComponentToEvidence(item, pageUrl));
-  const merged = mergeComponentEvidence(existing, evidence);
+  const rawEvidence = runtime.map(item => domComponentToEvidence(item, pageUrl));
+  const promotableEvidence = rawEvidence.filter(shouldPromoteRuntimeEvidence);
+  const merged = mergeComponentEvidence(existing, promotableEvidence);
   const categories = buildComponentCategories(merged);
 
-  expectEqual(merged.length, 4, 'runtime Button must merge with the HTTP Button');
+  expectEqual(rawEvidence.length, 4, 'all runtime observations should remain available as raw evidence');
+  expectEqual(promotableEvidence.length, 3, 'unknown runtime structures must not become canonical components');
+  expectEqual(merged.length, 3, 'runtime Button must merge with the HTTP Button and unknown candidates stay out');
 
   const button = merged.find(item => item.name === 'Button');
   expect(button, 'Button should remain in the normalized component set');
@@ -84,19 +88,17 @@ function main(): void {
   expectEqual(navItem?.category, 'navigation', 'runtime nav item should map to navigation');
 
   const unknown = merged.find(item => item.name === 'Decorative Cluster');
-  expectEqual(unknown?.category, 'other', 'unknown runtime structure should stay explicit');
-  expectEqual(unknown?.confidence, 0.6, 'unknown runtime structure should keep lower confidence');
+  expectEqual(unknown, undefined, 'unknown runtime structures must remain raw candidates only');
 
   expect(categories['data-input'].includes('Button'), 'component categories should include Button');
   expect(categories['data-display'].includes('Server Card'), 'component categories should include Server Card');
   expect(categories.navigation.includes('Nav Item'), 'component categories should include Nav Item');
-  expect(categories.other.includes('Decorative Cluster'), 'component categories should include unknown candidates');
+  expectEqual(categories.other.length, 0, 'unknown runtime candidates must not inflate canonical categories');
 
   const expected = new Set([
     signature('Button', 'data-input'),
     signature('Server Card', 'data-display'),
     signature('Nav Item', 'navigation'),
-    signature('Decorative Cluster', 'other'),
   ]);
   const actual = new Set(merged.map(item => signature(item.name, item.category)));
   const truePositives = [...actual].filter(item => expected.has(item)).length;
@@ -107,11 +109,13 @@ function main(): void {
   expectEqual(recall, 1, 'synthetic pipeline recall should remain stable');
 
   console.log('Component evidence pipeline benchmark');
-  console.log(`  normalized components: ${merged.length}`);
-  console.log(`  evidence records:      ${merged.reduce((sum, item) => sum + (item.evidence?.length || 0), 0)}`);
-  console.log(`  precision:             ${(precision * 100).toFixed(0)}%`);
-  console.log(`  recall:                ${(recall * 100).toFixed(0)}%`);
-  console.log('  status:                PASS');
+  console.log(`  raw runtime candidates: ${rawEvidence.length}`);
+  console.log(`  promoted candidates:    ${promotableEvidence.length}`);
+  console.log(`  normalized components:  ${merged.length}`);
+  console.log(`  evidence records:       ${merged.reduce((sum, item) => sum + (item.evidence?.length || 0), 0)}`);
+  console.log(`  precision:              ${(precision * 100).toFixed(0)}%`);
+  console.log(`  recall:                 ${(recall * 100).toFixed(0)}%`);
+  console.log('  status:                 PASS');
 }
 
 function component(

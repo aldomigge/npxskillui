@@ -15,7 +15,7 @@ interface RawDOMGroup extends DOMCandidateSummary {
 /**
  * Ultra mode — Runtime Component Detector v2
  *
- * Detection now separates observation from classification:
+ * Detection separates observation from classification:
  * - browser: collect rendered structure, HTML/ARIA semantics, classes, ancestry
  * - node: classify with semantic HTML/ARIA first, class naming second
  *
@@ -83,7 +83,10 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
         const tag = el.tagName.toLowerCase();
         const role = el.getAttribute('role') || '';
         const inputType = el instanceof HTMLInputElement ? el.type : '';
-        return `${tag}|role=${role}|type=${inputType}[${classes.join('.')}](${childStructure(el)})`;
+        const semanticKey = classes.length === 0
+          ? (el.getAttribute('aria-label') || el.getAttribute('name') || '').trim().slice(0, 80)
+          : '';
+        return `${tag}|role=${role}|type=${inputType}|key=${semanticKey}[${classes.join('.')}](${childStructure(el)})`;
       }
 
       function htmlSnippet(el: Element): string {
@@ -119,8 +122,9 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
         const tag = el.tagName.toLowerCase();
         const role = (el.getAttribute('role') || '').toLowerCase();
         const classText = classes.join(' ').toLowerCase();
-        if (['button', 'input', 'select', 'textarea', 'nav', 'table', 'dialog', 'li'].includes(tag)) return true;
+        if (['button', 'input', 'select', 'textarea', 'nav', 'table', 'dialog'].includes(tag)) return true;
         if (role && role !== 'presentation' && role !== 'none') return true;
+        if (tag === 'li' && el.closest('nav,[role="navigation"],[role="menu"]')) return true;
         if (tag === 'a') {
           if (el.closest('nav,[role="navigation"],[role="menu"]')) return true;
           if (/navigation|(^|[_-])nav([_-]|$)|menu|tabs?/.test(classText)) return true;

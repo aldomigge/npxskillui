@@ -8,6 +8,7 @@ import { runUltraMode } from './modes/ultra.js';
 import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
 import { configurePlaywrightBrowser } from './playwright-loader.js';
+import { installAgentIntegrations } from './agents/index.js';
 import { CLIOptions, DesignProfile } from './types.js';
 import {
   VERSION,
@@ -40,21 +41,21 @@ program
   .option('--browser <browser>', 'Playwright browser: chromium | chrome', 'chromium')
   .option('--headed', 'Run a launched Playwright browser with a visible window', false)
   .option('--cdp-endpoint <url>', 'Connect to an existing Chromium/Chrome browser over CDP')
+  .option('--agent <agent>', 'Agent integration: claude | codex | both', 'claude')
   .action(async (opts: CLIOptions) => {
-    // Always show the logo on every command
     await showLogo();
 
     const modes = [opts.dir, opts.repo, opts.url].filter(Boolean);
 
     if (modes.length === 0) {
-      // No args — ask step-by-step questions
       const answers = await runInteractivePrompts();
       if (!answers) process.exit(0);
-      opts.url  = answers.source === 'url'  ? answers.target : undefined;
-      opts.dir  = answers.source === 'dir'  ? answers.target : undefined;
+      opts.url = answers.source === 'url' ? answers.target : undefined;
+      opts.dir = answers.source === 'dir' ? answers.target : undefined;
       opts.repo = answers.source === 'repo' ? answers.target : undefined;
       opts.mode = answers.mode;
-      opts.out  = answers.out || './';
+      opts.out = answers.out || './';
+      opts.agent = answers.agent;
     } else if (modes.length > 1) {
       console.error('  Error: Specify only one of --dir, --repo, or --url\n');
       process.exit(1);
@@ -62,6 +63,11 @@ program
 
     if (!['chromium', 'chrome'].includes(opts.browser)) {
       console.error(`  Error: Unsupported browser "${opts.browser}". Use chromium or chrome.\n`);
+      process.exit(1);
+    }
+
+    if (!['claude', 'codex', 'both'].includes(opts.agent)) {
+      console.error(`  Error: Unsupported agent "${opts.agent}". Use claude, codex, or both.\n`);
       process.exit(1);
     }
 
@@ -75,17 +81,14 @@ program
       }
     }
 
-    // Configure all Playwright-backed extractors in one place. With no browser
-    // flags this preserves the original headless Chromium behavior.
     configurePlaywrightBrowser({
       browser: opts.browser,
       headed: opts.headed,
       cdpEndpoint: opts.cdpEndpoint,
     });
 
-    // ── Determine target label for brief ──────────────────────────────
     const target = opts.url || opts.dir || opts.repo || '';
-    showMissionBrief(opts.mode || 'default', target, path.resolve(opts.out));
+    showMissionBrief(opts.mode || 'default', target, path.resolve(opts.out), opts.agent);
 
     try {
       let profile: DesignProfile;
@@ -94,7 +97,6 @@ program
       const outputDir = path.resolve(opts.out);
       fs.mkdirSync(outputDir, { recursive: true });
 
-      // ── Dir mode ──────────────────────────────────────────────────
       if (opts.dir) {
         const resolvedDir = path.resolve(opts.dir);
         if (!fs.existsSync(resolvedDir)) {
@@ -109,8 +111,6 @@ program
           failSpinner(sp, 'Directory scan', e.message);
           throw e;
         }
-
-      // ── Repo mode ─────────────────────────────────────────────────
       } else if (opts.repo) {
         const sp = startSpinner('Cloning repository...');
         try {
@@ -120,8 +120,6 @@ program
           failSpinner(sp, 'Repo clone', e.message);
           throw e;
         }
-
-      // ── URL mode ──────────────────────────────────────────────────
       } else {
         const safeName = (opts.name || new URL(opts.url!).hostname.replace(/^www\./, '').split('.')[0])
           .replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase();
@@ -149,7 +147,6 @@ program
         screenshotPath = urlResult.screenshotPath;
       }
 
-      // ── Ultra mode (URL only) ──────────────────────────────────────
       const isUltra = opts.mode === 'ultra' && !!opts.url;
       let ultraAnimations: import('./types-ultra.js').FullAnimationResult | null = null;
 
@@ -159,7 +156,6 @@ program
           .replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase();
         const skillDir = path.join(path.resolve(opts.out), `${safeName}-design`);
 
-        // Check playwright before spinning up ultra
         const { loadPlaywright } = await import('./playwright-loader.js');
         if (!loadPlaywright()) {
           showUltraPlaywrightError();
@@ -180,7 +176,6 @@ program
         }
       }
 
-      // ── Generate + write outputs ───────────────────────────────────
       const shouldWriteDesignMd = opts.format === 'design-md' || opts.format === 'both';
       const shouldWriteSkill = opts.skill !== false && (opts.format === 'skill' || opts.format === 'both');
 
@@ -206,18 +201,22 @@ program
           skillFilePath = result.skillFile;
           succeedSpinner(spSkill, '.skill package', skillFilePath);
 
-          // ── Auto-install to ~/.claude/skills/ + write CLAUDE.md ──
-          // Use the actual skillDir folder name (e.g. "ascend-design") as the skill name
-          const skillFolderName = path.basename(result.skillDir);
-          skillInstalled = installSkillForClaude(result.skillDir, skillFolderName);
-          writeClaludeMd(result.skillDir, skillFolderName, profile.projectName);
+          const integration = installAgentIntegrations(opts.agent, {
+            skillDir: result.skillDir,
+            skillFolderName: path.basename(result.skillDir),
+            projectName: profile.projectName,
+          });
+          skillInstalled = integration.installed;
+
+          if (!integration.installed) {
+            warnLine(`Could not install all requested ${opts.agent} integration files automatically`);
+          }
         } catch (e: any) {
           failSpinner(spSkill, '.skill package', e.message);
           throw e;
         }
       }
 
-      // ── Show results panel ─────────────────────────────────────────
       showResults({
         profile,
         animations: ultraAnimations ?? undefined,
@@ -225,8 +224,8 @@ program
         designMdPath,
         projectName: safeName,
         skillInstalled,
+        agent: opts.agent,
       });
-
     } catch (err: any) {
       console.error(`\n  Error: ${err.message || err}\n`);
       process.exit(1);
@@ -234,52 +233,3 @@ program
   });
 
 program.parse();
-
-// ── Write CLAUDE.md into the design folder so Claude Code picks it up ────
-function writeClaludeMd(skillDir: string, safeName: string, projectName: string): void {
-  try {
-    const claudeMdPath = path.join(skillDir, 'CLAUDE.md');
-    // Don't overwrite if one already exists
-    if (fs.existsSync(claudeMdPath)) return;
-    const content = `# ${projectName} Design System
-
-This project uses the **${projectName}** design system extracted by skillui.
-
-## How to use
-
-Read \`SKILL.md\` in this directory for the full design system reference before writing any UI code.
-
-Key files:
-- \`SKILL.md\` — master design reference (read this first)
-- \`references/DESIGN.md\` — extended tokens and component specs
-- \`references/ANIMATIONS.md\` — motion and keyframe specs
-- \`references/LAYOUT.md\` — grid and layout containers
-- \`references/COMPONENTS.md\` — DOM component patterns
-- \`screens/scroll/\` — scroll journey screenshots (study before implementing)
-
-When building any UI, always read SKILL.md first and match colors, fonts, spacing, and motion exactly.
-`;
-    fs.writeFileSync(claudeMdPath, content, 'utf-8');
-  } catch { /* non-fatal */ }
-}
-
-// ── Auto-install skill to ~/.claude/skills/<name>/SKILL.md ───────────────
-// Claude Code requires each skill to be a FOLDER with SKILL.md inside it.
-function installSkillForClaude(skillDir: string, safeName: string): boolean {
-  try {
-    const skillMdSrc = path.join(skillDir, 'SKILL.md');
-    if (!fs.existsSync(skillMdSrc)) return false;
-
-    const homeDir = process.env.USERPROFILE || process.env.HOME || '';
-    if (!homeDir) return false;
-
-    // ~/.claude/skills/<safeName>/SKILL.md  ← correct structure for /skills
-    const destDir = path.join(homeDir, '.claude', 'skills', safeName);
-    fs.mkdirSync(destDir, { recursive: true });
-    fs.copyFileSync(skillMdSrc, path.join(destDir, 'SKILL.md'));
-
-    return true;
-  } catch {
-    return false;
-  }
-}

@@ -219,7 +219,10 @@ function scoreNameClass(descriptor: ClassDescriptor, category: DOMComponent['cat
     dialog: ['dialog', 'modal'],
   };
 
-  if (preferredByCategory[category]?.some(word => words.has(word))) score += 100;
+  const preferred = preferredByCategory[category] || [];
+  const hasPreferredWord = preferred.some(word => words.has(word));
+  if (hasPreferredWord) score += 100;
+  if (descriptor.localWords.length === 1 && preferred.includes(descriptor.localWords[0])) score += 20;
   if ([...words].some(word => STATE_STYLE_WORDS.has(word))) score -= 35;
   if (descriptor.localWords.length === 1 && ['root', 'wrapper', 'container'].includes(descriptor.localWords[0])) score -= 10;
   return score;

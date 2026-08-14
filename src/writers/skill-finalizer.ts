@@ -16,7 +16,7 @@ interface TypographyUsage {
 }
 
 /**
- * Normalize generated SKILL.md semantics after the legacy writer runs.
+ * Normalize generated design documentation after the legacy writers run.
  *
  * This keeps extraction/generation backward compatible while making the final
  * skill explicit about what was extracted versus what was synthesized from
@@ -29,12 +29,14 @@ export async function finalizeGeneratedSkill(
   const skillMdPath = path.join(result.skillDir, 'SKILL.md');
   if (!fs.existsSync(skillMdPath)) return result;
 
-  let content = fs.readFileSync(skillMdPath, 'utf-8');
   const typography = deriveTypographyUsage(profile);
+  normalizeStandaloneDesignFiles(result.skillDir, typography, profile.components.length);
 
+  let content = fs.readFileSync(skillMdPath, 'utf-8');
   content = makeAgentNeutral(content);
   content = addEvidencePrecedence(content);
   content = normalizeTypography(content, typography);
+  content = normalizeDesignMdGuidance(content, typography, profile.components.length);
   content = normalizeComponentGuidance(content, profile.components.length);
   content = normalizeWorkflow(content);
   content = normalizeQuickReference(content, profile.components.length, typography);
@@ -43,6 +45,23 @@ export async function finalizeGeneratedSkill(
   await rebuildSkillArchive(result.skillDir, result.skillFile);
 
   return result;
+}
+
+function normalizeStandaloneDesignFiles(
+  skillDir: string,
+  usage: TypographyUsage,
+  detectedCount: number
+): void {
+  const files = [
+    path.join(skillDir, 'DESIGN.md'),
+    path.join(skillDir, 'references', 'DESIGN.md'),
+  ];
+
+  for (const file of files) {
+    if (!fs.existsSync(file)) continue;
+    const content = fs.readFileSync(file, 'utf-8');
+    fs.writeFileSync(file, normalizeDesignMdGuidance(content, usage, detectedCount), 'utf-8');
+  }
 }
 
 function makeAgentNeutral(content: string): string {
@@ -118,22 +137,10 @@ function deriveTypographyUsage(profile: DesignProfile): TypographyUsage {
 function normalizeTypography(content: string, usage: TypographyUsage): string {
   const roleRule = typographyRoleRule(usage);
 
-  content = content.replace(
-    /^- \*\*Type pairing\*\* — .*$/m,
-    roleRule
-  );
-  content = content.replace(
-    /^- \*\*Single typeface\*\* — .*$/m,
-    roleRule
-  );
-  content = content.replace(
-    /^- Body\/UI: .*$/m,
-    roleRule
-  );
-  content = content.replace(
-    /^- All text uses \*\*.*$/m,
-    roleRule
-  );
+  content = content.replace(/^- \*\*Type pairing\*\* — .*$/m, roleRule);
+  content = content.replace(/^- \*\*Single typeface\*\* — .*$/m, roleRule);
+  content = content.replace(/^- Body\/UI: .*$/m, roleRule);
+  content = content.replace(/^- All text uses \*\*.*$/m, roleRule);
 
   if (usage.bodyFont || usage.headingFont) {
     const brandLines: string[] = [];
@@ -157,6 +164,57 @@ function typographyRoleRule(usage: TypographyUsage): string {
   }
 
   return '- **Typography role safety** — follow the extracted Type Scale table. Do not infer heading/body purpose from font discovery order when explicit role evidence is missing.';
+}
+
+function typographySummarySentence(usage: TypographyUsage): string {
+  if (usage.bodyFont && usage.headingFont && usage.bodyFont !== usage.headingFont && usage.hasBodyEvidence && usage.hasHeadingEvidence) {
+    return `Typography uses **${usage.headingFont}** for extracted heading roles and **${usage.bodyFont}** for extracted body/caption roles. Role assignments come from the extracted type scale, not font discovery order.`;
+  }
+
+  if (usage.bodyFont && usage.headingFont && usage.bodyFont === usage.headingFont && (usage.hasBodyEvidence || usage.hasHeadingEvidence)) {
+    return `Typography uses **${usage.bodyFont}** across the extracted body and heading roles; hierarchy comes from the extracted sizes and weights.`;
+  }
+
+  return 'Typography roles must follow the extracted type-scale table; font purpose must not be inferred from discovery order.';
+}
+
+function normalizeDesignMdGuidance(
+  content: string,
+  usage: TypographyUsage,
+  detectedCount: number
+): string {
+  const roleRule = typographyRoleRule(usage);
+  const summary = typographySummarySentence(usage);
+
+  content = content.replace(
+    /Typography pairs \*\*[^*]+\*\* for display\/headings with \*\*[^*]+\*\* for body text, creating clear visual hierarchy through type contrast\./g,
+    summary
+  );
+
+  content = content.replace(
+    /^- Use \*\*[^*]+\*\* for body\/UI text, \*\*[^*]+\*\* for display\/headings$/gm,
+    roleRule
+  );
+
+  content = content.replace(
+    /^- Pair \*\*[^*]+\*\* \(body\) with \*\*[^*]+\*\* \(display\) — these are the only allowed fonts$/gm,
+    roleRule
+  );
+
+  if (usage.bodyFont) {
+    content = content.replace(/^Font:\s+.*$/gm, `Font: ${usage.bodyFont}`);
+  }
+
+  const agentGuideIntro = detectedCount === 0
+    ? 'No components were confidently detected. The examples below are token-derived implementation starting points, not extracted component evidence. Validate them against screenshots and tokens before use.'
+    : `The examples below are token-derived implementation starting points. ${detectedCount} component records were detected separately; prefer extracted component evidence when it exists.`;
+
+  content = content.replace(
+    /## 10\. Agent Prompt Guide\n\nUse these as starting points when building new UI:\n\n/g,
+    `## 10. Token-Derived Agent Prompt Guide\n\n${agentGuideIntro}\n\n`
+  );
+
+  return content;
 }
 
 function normalizeComponentGuidance(content: string, detectedCount: number): string {

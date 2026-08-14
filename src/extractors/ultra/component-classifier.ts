@@ -46,7 +46,8 @@ export function classifyDOMCandidate(candidate: DOMCandidateSummary): DOMClassif
   const insideNavigation = ancestorTags.includes('nav')
     || ancestorRoles.includes('navigation')
     || ancestorRoles.includes('menu')
-    || /(^|[\s_-])(navigation|nav|menu|tabs?)([\s_-]|$)/.test(classText);
+    || /navigation/.test(classText)
+    || /(^|[\s_-])(nav|menu|tabs?)([\s_-]|$)/.test(classText);
 
   if (tag === 'dialog' || role === 'dialog' || role === 'alertdialog') {
     return classification('dialog', 0.98, 1, [`semantic ${tag === 'dialog' ? '<dialog>' : `role=${role}`} evidence`]);
@@ -146,8 +147,8 @@ export function deriveDOMComponentName(candidate: DOMCandidateSummary): string {
 /** Strip CSS-module hash suffixes while preserving the semantic namespace. */
 export function stripCssModuleHash(value: string): string {
   return value
-    .replace(/__[-A-Za-z0-9]{4,}$/g, '')
     .replace(/___[-A-Za-z0-9]{4,}$/g, '')
+    .replace(/__[-A-Za-z0-9]{4,}$/g, '')
     .trim();
 }
 

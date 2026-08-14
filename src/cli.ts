@@ -9,6 +9,7 @@ import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
 import { configurePlaywrightBrowser } from './playwright-loader.js';
 import { installAgentIntegrations } from './agents/index.js';
+import { promptAgentTarget, showAgentResults } from './agents/ui.js';
 import { CLIOptions, DesignProfile } from './types.js';
 import {
   VERSION,
@@ -19,7 +20,6 @@ import {
   failSpinner,
   warnLine,
   showUltraPlaywrightError,
-  showResults,
   runInteractivePrompts,
 } from './ui.js';
 
@@ -55,7 +55,7 @@ program
       opts.repo = answers.source === 'repo' ? answers.target : undefined;
       opts.mode = answers.mode;
       opts.out = answers.out || './';
-      opts.agent = answers.agent;
+      opts.agent = await promptAgentTarget(opts.agent);
     } else if (modes.length > 1) {
       console.error('  Error: Specify only one of --dir, --repo, or --url\n');
       process.exit(1);
@@ -88,7 +88,7 @@ program
     });
 
     const target = opts.url || opts.dir || opts.repo || '';
-    showMissionBrief(opts.mode || 'default', target, path.resolve(opts.out), opts.agent);
+    showMissionBrief(opts.mode || 'default', target, path.resolve(opts.out));
 
     try {
       let profile: DesignProfile;
@@ -217,7 +217,7 @@ program
         }
       }
 
-      showResults({
+      showAgentResults({
         profile,
         animations: ultraAnimations ?? undefined,
         skillFilePath,

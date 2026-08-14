@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsup",
     "start": "node dist/cli.js",
+    "benchmark:components": "npm run build && node dist/component-benchmark.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

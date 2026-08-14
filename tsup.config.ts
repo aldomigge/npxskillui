@@ -32,7 +32,10 @@ const fixCssTreePlugin = {
 }
 
 export default defineConfig({
-  entry: { cli: 'src/cli.ts' },
+  entry: {
+    cli: 'src/cli.ts',
+    'component-benchmark': 'src/benchmarks/component-evidence.ts',
+  },
   format: ['cjs'],
   platform: 'node',
   outDir: 'dist',

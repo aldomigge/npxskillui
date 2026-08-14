@@ -96,7 +96,7 @@ export function classifyDOMCandidate(candidate: DOMCandidateSummary): DOMClassif
   }
 
   if (tag === 'li') {
-    return classification('list-item', 0.86, 1, ['semantic <li> evidence']);
+    return classification('list-item', 0.86, 3, ['semantic <li> evidence; repetition required for generic list items']);
   }
 
   if ((classWords.has('list') && classWords.has('item'))

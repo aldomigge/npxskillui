@@ -58,7 +58,7 @@ function main(): void {
   ];
 
   const evidence = runtime.map(item => domComponentToEvidence(item, pageUrl));
-  const merged = mergeComponentEvidence(existing, evidence, pageUrl);
+  const merged = mergeComponentEvidence(existing, evidence);
   const categories = buildComponentCategories(merged);
 
   expectEqual(merged.length, 4, 'runtime Button must merge with the HTTP Button');
@@ -72,6 +72,7 @@ function main(): void {
     ['http-dom', 'runtime-dom'],
     'Button should preserve both HTTP and runtime provenance'
   );
+  expectArrayEqual(button?.pages || [], [pageUrl], 'page provenance should come from runtime evidence only');
 
   const serverCard = merged.find(item => item.name === 'Server Card');
   expect(serverCard, 'runtime-only Server Card should be promoted into ComponentInfo');

@@ -3,24 +3,54 @@ import { DesignProfile } from '../types';
 
 /**
  * Generate references/COMPONENTS.md
- * Documents all detected repeated DOM components with HTML snippets.
+ *
+ * Keeps two evidence layers explicit:
+ * - canonical components promoted into DesignProfile
+ * - raw repeated DOM candidates emitted by the Ultra structural detector
  */
 export function generateComponentsMd(
   domComponents: DOMComponent[],
   profile: DesignProfile
 ): string {
   let md = `# Component Reference\n\n`;
-  md += `> Repeated DOM patterns detected by structural analysis. Each component appeared 3+ times.\n\n`;
+  md += `> Canonical components are the observations promoted into the normalized design profile.\n`;
+  md += `> Raw repeated DOM candidates are structural observations for inspection; they are not automatically canonical components.\n\n`;
+
+  // ── Canonical inventory ─────────────────────────────────────────────
+  md += `## Canonical Components\n\n`;
+
+  if (profile.components.length === 0) {
+    md += `No component observations were promoted into the canonical design profile.\n\n`;
+  } else {
+    md += `These are the component records that downstream DESIGN.md / SKILL.md guidance may treat as extracted component evidence.\n\n`;
+    md += `| Component | Category | Confidence | Instances | Evidence Sources |\n`;
+    md += `|-----------|----------|------------|-----------|------------------|\n`;
+
+    for (const component of profile.components) {
+      const confidence = component.confidence != null
+        ? `${Math.round(component.confidence * 100)}%`
+        : 'n/a';
+      const instances = component.instances != null ? `${component.instances}×` : 'n/a';
+      const sources = component.evidence?.length
+        ? [...new Set(component.evidence.map(e => e.source))].join(', ')
+        : inferLegacySource(component.filePath);
+
+      md += `| **${component.name}** | ${component.category} | ${confidence} | ${instances} | ${sources} |\n`;
+    }
+    md += `\n`;
+  }
+
+  // ── Raw repeated-DOM inventory ──────────────────────────────────────
+  md += `## Raw Repeated DOM Candidates\n\n`;
+  md += `> Structural patterns below appeared 3+ times in the rendered DOM. They remain useful evidence even when the promotion policy rejects them as wrappers, substructures, or low-confidence candidates.\n\n`;
 
   if (domComponents.length === 0) {
-    md += `No repeated components detected (Playwright required).\n`;
+    md += `No repeated DOM candidates detected (Playwright required).\n`;
     return md;
   }
 
-  // ── Overview ────────────────────────────────────────────────────────
-  md += `## Detected Components\n\n`;
-  md += `| Component | Category | Instances | Key Classes |\n`;
-  md += `|-----------|----------|-----------|-------------|\n`;
+  md += `| Candidate | Detector Category | Instances | Key Classes |\n`;
+  md += `|-----------|-------------------|-----------|-------------|\n`;
   for (const c of domComponents) {
     const classes = c.commonClasses.slice(0, 3).map(cl => `\`.${cl}\``).join(', ');
     md += `| **${c.name}** | ${c.category} | ${c.instances}× | ${classes} |\n`;
@@ -46,7 +76,7 @@ export function generateComponentsMd(
     const comps = byCategory[category];
     if (!comps?.length) continue;
 
-    md += `## ${formatCategory(category)}\n\n`;
+    md += `## Raw ${formatCategory(category)}\n\n`;
 
     for (const comp of comps) {
       md += `### ${comp.name}\n\n`;
@@ -62,12 +92,13 @@ export function generateComponentsMd(
       md += `${comp.htmlSnippet}\n`;
       md += `\`\`\`\n\n`;
 
-      // Suggested base CSS from design tokens
+      // Suggested base CSS from design tokens. This is intentionally labeled
+      // as synthesized guidance rather than measured component styling.
       const suggestedCss = buildSuggestedCss(comp, {
         accent, bg, surface, border, textPrimary, commonRadius, profile
       });
       if (suggestedCss) {
-        md += `**Base styles (from design tokens):**\n\n`;
+        md += `**Token-derived implementation starting point (not measured component styles):**\n\n`;
         md += `\`\`\`css\n`;
         md += suggestedCss;
         md += `\`\`\`\n\n`;
@@ -75,16 +106,18 @@ export function generateComponentsMd(
     }
   }
 
-  // ── Rules ───────────────────────────────────────────────────────────
-  md += `## Component Rules\n\n`;
-  md += `- Match class names exactly from the patterns above\n`;
-  md += `- Each component instance must be visually identical to others of its type\n`;
-  md += `- Do not add extra wrappers or change the DOM structure\n`;
+  // ── Evidence Rules ──────────────────────────────────────────────────
+  md += `## Component Evidence Rules\n\n`;
+  md += `- Treat the **Canonical Components** table as the normalized component inventory.\n`;
+  md += `- Treat **Raw Repeated DOM Candidates** as structural evidence, not proof that each candidate is a reusable component.\n`;
+  md += `- Utility wrappers and unclassified substructures may remain in the raw inventory without being promoted.\n`;
+  md += `- Use raw HTML/classes to validate canonical components and screenshot structure; do not promote a raw candidate by assumption.\n`;
+  md += `- Token-derived CSS shown for raw candidates is fallback guidance, not measured source styling.\n`;
   if (border) {
-    md += `- Use \`${border.hex}\` for all dividers within components\n`;
+    md += `- Extracted border token: \`${border.hex}\`.\n`;
   }
   if (accent) {
-    md += `- Use \`${accent.hex}\` for all interactive/active states\n`;
+    md += `- Extracted accent token: \`${accent.hex}\`.\n`;
   }
   md += `\n`;
 
@@ -154,6 +187,12 @@ function buildSuggestedCss(comp: DOMComponent, tokens: TokenSet): string {
   return lines.join('\n');
 }
 
+function inferLegacySource(filePath: string): string {
+  if (filePath === 'html') return 'http-dom';
+  if (filePath.startsWith('runtime-dom')) return 'runtime-dom';
+  return 'source-code';
+}
+
 function formatCategory(cat: string): string {
   const map: Record<string, string> = {
     card: 'Cards',
@@ -162,7 +201,7 @@ function formatCategory(cat: string): string {
     button: 'Buttons',
     badge: 'Badges & Chips',
     'form-field': 'Form Fields',
-    unknown: 'Other Components',
+    unknown: 'Other Candidates',
   };
   return map[cat] || cat;
 }

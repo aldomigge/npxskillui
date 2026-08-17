@@ -92,9 +92,16 @@ export function buildResponsiveSurfacePlan(
 }
 
 /**
- * Compare two samples using structural properties only. Width/height changes
- * are intentionally ignored because ordinary fluid sizing should not be
- * mistaken for a responsive mode switch.
+ * Compare two samples using conservative structural properties only.
+ *
+ * Presence-only differences are intentionally ignored. On a live page, a node
+ * that exists in only one sample may be caused by lazy loading, carousel state,
+ * A/B content, or timing rather than a media-query/layout decision. The
+ * screenshots remain the authoritative evidence for those cases.
+ *
+ * Width/height changes are also ignored. Grid templates are reported only when
+ * their track count changes, so a fluid one-column 1434px → 384px resize is not
+ * mislabeled as a structural responsive switch.
  */
 export function diffResponsiveElements(
   baseline: ResponsiveElementSnapshot[],
@@ -108,17 +115,12 @@ export function diffResponsiveElements(
   for (const key of keys) {
     const before = baselineMap.get(key);
     const after = targetMap.get(key);
-    const selector = after?.selector || before?.selector || key;
 
-    if (!before || !after) {
-      changes.push({
-        selector,
-        property: 'visibility',
-        from: before ? visibilityLabel(before) : 'absent',
-        to: after ? visibilityLabel(after) : 'absent',
-      });
-      continue;
-    }
+    // A single runtime sample cannot prove that DOM presence/absence is caused
+    // by responsive CSS. Require the same structural identity in both samples.
+    if (!before || !after) continue;
+
+    const selector = after.selector || before.selector || key;
 
     if (before.visible !== after.visible) {
       changes.push({
@@ -134,12 +136,28 @@ export function diffResponsiveElements(
     if (!before.visible || !after.visible) continue;
 
     pushChange(changes, selector, 'display', before.display, after.display);
-    pushChange(changes, selector, 'flex-direction', before.flexDirection, after.flexDirection);
-    pushChange(changes, selector, 'grid-template-columns', before.gridTemplateColumns, after.gridTemplateColumns);
+
+    if (isFlexDisplay(before.display) || isFlexDisplay(after.display)) {
+      pushChange(changes, selector, 'flex-direction', before.flexDirection, after.flexDirection);
+    }
+
+    if (
+      (isGridDisplay(before.display) || isGridDisplay(after.display)) &&
+      shouldReportGridTemplateChange(before.gridTemplateColumns, after.gridTemplateColumns)
+    ) {
+      pushChange(
+        changes,
+        selector,
+        'grid-template-columns',
+        before.gridTemplateColumns,
+        after.gridTemplateColumns
+      );
+    }
+
     pushChange(changes, selector, 'position', before.position, after.position);
   }
 
-  return changes;
+  return dedupeChanges(changes);
 }
 
 export async function captureResponsiveEvidence(
@@ -377,6 +395,75 @@ function visibilityLabel(element: ResponsiveElementSnapshot): string {
   return element.visible ? 'visible' : 'hidden';
 }
 
+function isFlexDisplay(display: string): boolean {
+  return display === 'flex' || display === 'inline-flex';
+}
+
+function isGridDisplay(display: string): boolean {
+  return display === 'grid' || display === 'inline-grid';
+}
+
+/**
+ * Report grid-template changes only when the number of rendered tracks changes.
+ * Computed pixel widths naturally resize with the viewport and are not a mode
+ * switch by themselves.
+ */
+export function shouldReportGridTemplateChange(from: string, to: string): boolean {
+  if (!from || !to || from === to) return false;
+
+  const fromCount = gridTrackCount(from);
+  const toCount = gridTrackCount(to);
+  if (fromCount !== null && toCount !== null) return fromCount !== toCount;
+
+  return false;
+}
+
+function gridTrackCount(value: string): number | null {
+  const normalized = value.trim();
+  if (!normalized || normalized === 'none') return 0;
+
+  const tokens = splitTopLevelGridTracks(normalized);
+  if (tokens.length === 0) return null;
+
+  let count = 0;
+  for (const token of tokens) {
+    const repeat = token.match(/^repeat\(\s*(\d+)\s*,/i);
+    if (repeat) {
+      count += Number(repeat[1]);
+      continue;
+    }
+
+    // auto-fit/auto-fill cannot be converted to an exact track count from the
+    // template string alone, so avoid claiming a structural change.
+    if (/^repeat\(\s*(auto-fit|auto-fill)\s*,/i.test(token)) return null;
+    count++;
+  }
+
+  return count;
+}
+
+function splitTopLevelGridTracks(value: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let depth = 0;
+
+  for (const char of value) {
+    if (char === '(' || char === '[') depth++;
+    if (char === ')' || char === ']') depth = Math.max(0, depth - 1);
+
+    if (/\s/.test(char) && depth === 0) {
+      if (current.trim()) tokens.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.trim()) tokens.push(current.trim());
+  return tokens;
+}
+
 function pushChange(
   changes: ResponsiveChange[],
   selector: string,
@@ -386,4 +473,14 @@ function pushChange(
 ): void {
   if (!from || !to || from === to) return;
   changes.push({ selector, property, from, to });
+}
+
+function dedupeChanges(changes: ResponsiveChange[]): ResponsiveChange[] {
+  const seen = new Set<string>();
+  return changes.filter(change => {
+    const key = `${change.selector}|${change.property}|${change.from}|${change.to}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

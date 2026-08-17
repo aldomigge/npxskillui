@@ -8,6 +8,7 @@ import {
   buildResponsiveSurfacePlan,
   diffResponsiveElements,
   parseResponsiveViewports,
+  shouldReportGridTemplateChange,
 } from '../extractors/ultra/responsive';
 
 function main(): void {
@@ -67,16 +68,19 @@ function runDiffCases(): Result {
   const baseline: ResponsiveElementSnapshot[] = [
     element('nav.main', true, 'flex', 'row', 'none', 'static'),
     element('button.menu', false, 'none', 'row', 'none', 'static'),
-    element('section.cards', true, 'grid', 'row', '1fr 1fr 1fr', 'relative'),
+    element('section.cards', true, 'grid', 'row', '240px 240px 240px', 'relative'),
     element('div.content', true, 'flex', 'row', 'none', 'static'),
     element('aside.sidebar', true, 'block', 'row', 'none', 'sticky'),
+    element('section.fluid-grid', true, 'grid', 'row', '700px', 'static'),
   ];
   const mobile: ResponsiveElementSnapshot[] = [
     element('nav.main', false, 'none', 'row', 'none', 'static'),
     element('button.menu', true, 'block', 'row', 'none', 'fixed'),
-    element('section.cards', true, 'grid', 'row', '1fr', 'relative'),
+    element('section.cards', true, 'grid', 'row', '320px', 'relative'),
     element('div.content', true, 'flex', 'column', 'none', 'static'),
     element('aside.sidebar', true, 'block', 'row', 'none', 'static'),
+    element('section.fluid-grid', true, 'grid', 'row', '360px', 'static'),
+    element('div.async-only', true, 'block', 'row', 'none', 'static'),
   ];
 
   const changes = diffResponsiveElements(baseline, mobile);
@@ -84,19 +88,27 @@ function runDiffCases(): Result {
 
   expect(changes.some(change => change.selector === 'nav.main' && change.property === 'visibility'), 'nav visibility change should be detected'); passed++;
   expect(changes.some(change => change.selector === 'button.menu' && change.property === 'visibility'), 'menu visibility change should be detected'); passed++;
-  expect(changes.some(change => change.selector === 'section.cards' && change.property === 'grid-template-columns'), 'grid mode change should be detected'); passed++;
+  expect(changes.some(change => change.selector === 'section.cards' && change.property === 'grid-template-columns'), 'grid track-count change should be detected'); passed++;
   expect(changes.some(change => change.selector === 'div.content' && change.property === 'flex-direction'), 'flex direction change should be detected'); passed++;
   expect(changes.some(change => change.selector === 'aside.sidebar' && change.property === 'position'), 'position change should be detected'); passed++;
   expect(!changes.some(change => change.selector === 'nav.main' && change.property === 'display'), 'hidden element should not emit secondary display noise'); passed++;
+  expect(!changes.some(change => change.selector === 'section.fluid-grid' && change.property === 'grid-template-columns'), 'same-track fluid pixel resize should be ignored'); passed++;
+  expect(!changes.some(change => change.selector === 'div.async-only'), 'presence-only DOM differences should not be promoted'); passed++;
 
-  const missing = diffResponsiveElements(
-    [element('div.desktop-only', true, 'block', 'row', 'none', 'static')],
-    []
-  );
-  expectEqual(missing[0]?.to, 'absent', 'DOM disappearance should be explicit'); passed++;
+  expectEqual(
+    diffResponsiveElements(
+      [element('div.desktop-only', true, 'block', 'row', 'none', 'static')],
+      []
+    ).length,
+    0,
+    'DOM disappearance without matched identity should be ignored'
+  ); passed++;
 
   expectEqual(diffResponsiveElements(baseline, baseline).length, 0, 'identical samples should not invent changes'); passed++;
-  return { passed, total: 8 };
+  expectEqual(shouldReportGridTemplateChange('217px 217px', '146px 146px'), false, 'same two-track pixel resize should be fluid'); passed++;
+  expectEqual(shouldReportGridTemplateChange('repeat(2, 1fr)', '1fr'), true, 'two tracks collapsing to one should be structural'); passed++;
+
+  return { passed, total: 12 };
 }
 
 function runGroupingCases(): Result {
@@ -104,8 +116,8 @@ function runGroupingCases(): Result {
   const observations: ResponsiveViewportObservation[] = [
     observation('home', viewports[0], [element('nav.main', false, 'none', 'row', 'none', 'static')]),
     observation('home', viewports[1], [element('nav.main', true, 'flex', 'row', 'none', 'static')]),
-    observation('news', viewports[0], [element('section.news', true, 'grid', 'row', '1fr', 'static')]),
-    observation('news', viewports[1], [element('section.news', true, 'grid', 'row', '1fr 1fr', 'static')]),
+    observation('news', viewports[0], [element('section.news', true, 'grid', 'row', '320px', 'static')]),
+    observation('news', viewports[1], [element('section.news', true, 'grid', 'row', '320px 320px', 'static')]),
   ];
 
   const result = buildResponsiveEvidenceResult(observations, viewports);

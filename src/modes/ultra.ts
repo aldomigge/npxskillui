@@ -6,6 +6,7 @@ import { capturePageScreenshots } from '../extractors/ultra/pages';
 import { captureInteractions } from '../extractors/ultra/interactions';
 import { extractLayouts } from '../extractors/ultra/layout';
 import { detectDOMComponents } from '../extractors/ultra/components-dom';
+import { attachInteractionsToDOMComponents } from '../extractors/ultra/component-interactions';
 import { captureAnimations } from '../extractors/ultra/animations';
 import { mergeRuntimeComponentsIntoProfile } from '../extractors/component-evidence';
 import { generateLayoutMd } from '../writers/layout-md';
@@ -33,6 +34,8 @@ import { loadPlaywright } from '../playwright-loader';
  *
  * Runtime DOM components are also merged back into profile.components before
  * DESIGN.md/SKILL.md are generated, so all outputs use one normalized source.
+ * Measured component styles and matched interaction states travel through that
+ * same evidence path; token-derived recipes remain fallback-only guidance.
  */
 export async function runUltraMode(
   url: string,
@@ -71,8 +74,9 @@ export async function runUltraMode(
   // ── Step 4: Layout extraction ──────────────────────────────────────────
   const layouts = await extractLayouts(url);
 
-  // ── Step 5: DOM component detection + evidence merge ──────────────────
-  const domComponents = await detectDOMComponents(url);
+  // ── Step 5: DOM components + measured styles + interaction evidence ───
+  const detectedComponents = await detectDOMComponents(url);
+  const domComponents = attachInteractionsToDOMComponents(detectedComponents, interactions);
   mergeRuntimeComponentsIntoProfile(profile, domComponents, url);
 
   // ── Step 6: Write all reference files ─────────────────────────────────
@@ -125,7 +129,6 @@ function generateVisualGuideMd(
   md += `> Master visual reference. Study every screenshot carefully before implementing any UI.\n`;
   md += `> Match colors, layout, typography, spacing, and motion states exactly.\n\n`;
 
-  // Animation stack summary
   if (anim.libraries.length > 0) {
     const libs = anim.libraries.map(l => `**${l.name}**`).join(', ');
     md += `**Motion Stack:** ${libs}\n\n`;
@@ -134,7 +137,6 @@ function generateVisualGuideMd(
     md += `**WebGL/3D:** Detected (${anim.canvasCount} canvas elements) — replicate with Three.js or CSS 3D transforms\n\n`;
   }
 
-  // Scroll journey — most important section
   if (anim.scrollFrames.length > 0) {
     md += `## Scroll Journey\n\n`;
     md += `The page has cinematic scroll animations. Each screenshot below shows the exact visual state at that scroll depth.\n`;
@@ -151,7 +153,6 @@ function generateVisualGuideMd(
     }
   }
 
-  // Video backgrounds
   if (anim.videos.some(v => v.firstFramePath)) {
     md += `## Video Backgrounds\n\n`;
     md += `These videos play as background elements. Use first-frame as poster image while video loads.\n\n`;
@@ -163,7 +164,6 @@ function generateVisualGuideMd(
     }
   }
 
-  // Page screenshots
   if (pages.length > 0) {
     md += `## Full Page Screenshots\n\n`;
     for (const p of pages) {
@@ -174,7 +174,6 @@ function generateVisualGuideMd(
     }
   }
 
-  // Section clips
   if (sections.length > 0) {
     md += `## Section Screenshots\n\n`;
     md += `Clipped sections showing individual components in context.\n\n`;
@@ -213,7 +212,6 @@ function writeScreensIndex(
 ): void {
   let md = `# Screenshot Index\n\n`;
 
-  // Scroll journey (most important for animation sites)
   if (anim.scrollFrames.length > 0) {
     md += `## Scroll Journey\n\n`;
     md += `> Shows the cinematic state at each point of the page\n\n`;
@@ -225,7 +223,6 @@ function writeScreensIndex(
     md += `\n`;
   }
 
-  // Video frames
   if (anim.videos.some(v => v.firstFramePath)) {
     md += `## Video First Frames\n\n`;
     for (const v of anim.videos) {

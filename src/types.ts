@@ -55,6 +55,54 @@ export type ComponentCategory =
 
 export type ComponentEvidenceSource = 'source-code' | 'http-dom' | 'runtime-dom';
 
+/** Representative computed style values measured from a rendered component. */
+export interface ComponentStyleSnapshot {
+  backgroundColor: string;
+  backgroundImage: string;
+  color: string;
+  borderColor: string;
+  borderStyle: string;
+  borderWidth: string;
+  borderRadius: string;
+  padding: string;
+  gap: string;
+  boxShadow: string;
+  textShadow: string;
+  opacity: string;
+  transform: string;
+  filter: string;
+  outline: string;
+  outlineColor: string;
+  textDecoration: string;
+  transition: string;
+  fontFamily: string;
+  fontSize: string;
+  fontWeight: string;
+  lineHeight: string;
+  letterSpacing: string;
+  display: string;
+  alignItems: string;
+  justifyContent: string;
+  width: string;
+  height: string;
+  cursor: string;
+}
+
+export interface ComponentStyleDiff {
+  property: string;
+  from: string;
+  to: string;
+}
+
+export interface ComponentStateEvidence {
+  state: 'hover' | 'focus';
+  style: ComponentStyleSnapshot;
+  changes: ComponentStyleDiff[];
+  screenshot?: string;
+  label?: string;
+  selector?: string;
+}
+
 /**
  * One independently observed piece of evidence that a UI component exists.
  *
@@ -81,6 +129,10 @@ export interface ComponentEvidence {
   instances: number;
   structureFingerprint: string;
   styleFingerprint?: string;
+  /** Representative default-state computed style measured at runtime. */
+  measuredStyle?: ComponentStyleSnapshot;
+  /** Hover/focus states matched back to this runtime observation. */
+  stateEvidence?: ComponentStateEvidence[];
   htmlSnippet?: string;
   /** Confidence in this individual observation, from 0 to 1. */
   confidence: number;
@@ -189,6 +241,10 @@ export interface ComponentInfo {
   pages?: string[];
   /** Aggregate confidence from the strongest evidence, from 0 to 1. */
   confidence?: number;
+  /** Strongest representative default-state computed style. */
+  measuredStyle?: ComponentStyleSnapshot;
+  /** Runtime hover/focus evidence matched to this normalized component. */
+  stateEvidence?: ComponentStateEvidence[];
   /** Provenance used to build this normalized component record. */
   evidence?: ComponentEvidence[];
 }

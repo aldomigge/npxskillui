@@ -1,3 +1,9 @@
+import type {
+  ComponentStateEvidence,
+  ComponentStyleDiff,
+  ComponentStyleSnapshot,
+} from './types';
+
 // ── Ultra Mode Types ─────────────────────────────────────────────────
 
 export interface UltraOptions {
@@ -27,36 +33,28 @@ export interface SectionScreenshot {
 
 // ── Interactions ─────────────────────────────────────────────────────
 
-export interface StyleSnapshot {
-  backgroundColor: string;
-  color: string;
-  borderColor: string;
-  borderWidth: string;
-  boxShadow: string;
-  opacity: string;
-  transform: string;
-  outline: string;
-  outlineColor: string;
-  textDecoration: string;
-  transition: string;
-}
-
-export interface StyleDiff {
-  property: string;
-  from: string;
-  to: string;
-}
+export type StyleSnapshot = ComponentStyleSnapshot;
+export type StyleDiff = ComponentStyleDiff;
 
 export interface InteractionRecord {
   componentType: 'button' | 'link' | 'input' | 'role-button';
   label: string;
   selector: string;
   index: number;
+  /** Stable identity signals used to link this interaction to DOMComponent. */
+  nameHint?: string;
+  tag?: string;
+  role?: string;
+  classes: string[];
+  ariaLabel?: string;
   screenshots: {
     default?: string;
     hover?: string;
     focus?: string;
   };
+  defaultStyles: StyleSnapshot;
+  hoverStyles?: StyleSnapshot;
+  focusStyles?: StyleSnapshot;
   hoverChanges: StyleDiff[];
   focusChanges: StyleDiff[];
   transitionValue: string;
@@ -116,6 +114,12 @@ export interface DOMComponent {
   confidence?: number;
   /** Human-readable evidence that produced the classification. */
   reasons?: string[];
+  /** Representative default-state computed style from the rendered DOM. */
+  measuredStyle?: ComponentStyleSnapshot;
+  /** Stable fingerprint of the measured style subset. */
+  styleFingerprint?: string;
+  /** Hover/focus observations matched back from the interaction extractor. */
+  stateEvidence?: ComponentStateEvidence[];
   attributes?: {
     ariaLabel?: string;
     ariaRole?: string;

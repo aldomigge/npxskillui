@@ -2,19 +2,27 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { InteractionRecord, StyleDiff, StyleSnapshot } from '../../types-ultra';
 import { loadPlaywright } from '../../playwright-loader';
+import {
+  deriveDOMComponentName,
+  type DOMCandidateSummary,
+} from './component-classifier';
 
 const TRACKED_PROPS: (keyof StyleSnapshot)[] = [
   'backgroundColor',
+  'backgroundImage',
   'color',
   'borderColor',
   'borderWidth',
+  'borderRadius',
   'boxShadow',
+  'textShadow',
   'opacity',
   'transform',
+  'filter',
   'outline',
   'outlineColor',
   'textDecoration',
-  'transition',
+  'cursor',
 ];
 
 const INTERACTIVE_SELECTORS: Array<{
@@ -30,13 +38,9 @@ const INTERACTIVE_SELECTORS: Array<{
 /**
  * Ultra mode — Micro-Interaction Extractor
  *
- * For each interactive element type (button, link, input, role-button):
- * - Capture default screenshot
- * - Simulate hover → capture screenshot + diff computed styles
- * - Simulate focus → capture screenshot + diff computed styles
- *
- * Saves screenshots to screens/states/
- * Returns InteractionRecord[] for INTERACTIONS.md generation.
+ * Captures default/hover/focus computed styles plus enough semantic identity
+ * (tag, role, stable classes, component name hint) to link each observation
+ * back to Runtime Component Detector records.
  */
 export async function captureInteractions(
   url: string,
@@ -64,7 +68,7 @@ export async function captureInteractions(
 
     for (const { type, selector } of INTERACTIVE_SELECTORS) {
       try {
-        // Find up to 3 visible elements of this type
+        // Find up to 3 visible elements of this type.
         const elements = await page.locator(selector).all();
         const visible = [];
         for (const el of elements) {
@@ -82,15 +86,56 @@ export async function captureInteractions(
           const prefix = `${type}-${i + 1}`;
 
           try {
-            // Get label text
-            const label = await el.evaluate((node: Element) => {
-              const text = (node as HTMLElement).innerText?.trim() ||
-                           node.getAttribute('aria-label') ||
-                           node.getAttribute('placeholder') ||
-                           node.getAttribute('type') ||
-                           node.tagName.toLowerCase();
-              return text.slice(0, 40);
+            const identity = await el.evaluate((node: Element) => {
+              const stableClasses = Array.from(node.classList)
+                .filter(className => {
+                  if (/^(js-|is-|has-|data-|aria-)/.test(className)) return false;
+                  if (/^(hover:|focus:|active:|sm:|md:|lg:|xl:|2xl:)/.test(className)) return false;
+                  return className.length >= 3 && className.length <= 80 && /^[a-zA-Z]/.test(className);
+                })
+                .sort()
+                .slice(0, 6);
+
+              const ancestorTags: string[] = [];
+              const ancestorRoles: string[] = [];
+              let parent = node.parentElement;
+              let depth = 0;
+              while (parent && depth < 5) {
+                ancestorTags.push(parent.tagName.toLowerCase());
+                const parentRole = parent.getAttribute('role');
+                if (parentRole) ancestorRoles.push(parentRole);
+                parent = parent.parentElement;
+                depth++;
+              }
+
+              const label = (node as HTMLElement).innerText?.trim()
+                || node.getAttribute('aria-label')
+                || node.getAttribute('placeholder')
+                || node.getAttribute('type')
+                || node.tagName.toLowerCase();
+
+              return {
+                label: label.slice(0, 40),
+                tag: node.tagName.toLowerCase(),
+                role: node.getAttribute('role') || undefined,
+                classes: stableClasses,
+                ancestorTags,
+                ancestorRoles,
+                ariaLabel: node.getAttribute('aria-label') || undefined,
+                inputType: node instanceof HTMLInputElement ? node.type : undefined,
+              };
             });
+
+            const summary: DOMCandidateSummary = {
+              tag: identity.tag,
+              role: identity.role,
+              classes: identity.classes,
+              ancestorTags: identity.ancestorTags,
+              ancestorRoles: identity.ancestorRoles,
+              ariaLabel: identity.ariaLabel,
+              inputType: identity.inputType,
+            };
+            const nameHint = deriveDOMComponentName(summary);
 
             // ── Default state ─────────────────────────────────────
             const defaultStyles = await getStyles(el);
@@ -106,7 +151,6 @@ export async function captureInteractions(
               hoverStyles = await getStyles(el);
               hoverFile = `${prefix}-hover.png`;
               await screenshotElement(el, path.join(statesDir, hoverFile));
-              // Move away
               await page.mouse.move(0, 0);
               await page.waitForTimeout(200);
             } catch { /* hover not supported */ }
@@ -120,7 +164,6 @@ export async function captureInteractions(
               focusStyles = await getStyles(el);
               focusFile = `${prefix}-focus.png`;
               await screenshotElement(el, path.join(statesDir, focusFile));
-              // Blur
               await page.evaluate(() => (document.activeElement as HTMLElement)?.blur?.());
               await page.waitForTimeout(200);
             } catch { /* focus not supported */ }
@@ -132,27 +175,28 @@ export async function captureInteractions(
               ? diffStyles(defaultStyles, focusStyles)
               : [];
 
-            // Only record if there are actual visual changes
-            if (
-              hoverChanges.length > 0 ||
-              focusChanges.length > 0 ||
-              defaultFile
-            ) {
-              records.push({
-                componentType: type,
-                label: label || type,
-                selector: `${selector}:nth-of-type(${i + 1})`,
-                index: i + 1,
-                screenshots: {
-                  default: `screens/states/${defaultFile}`,
-                  hover: hoverFile ? `screens/states/${hoverFile}` : undefined,
-                  focus: focusFile ? `screens/states/${focusFile}` : undefined,
-                },
-                hoverChanges,
-                focusChanges,
-                transitionValue: defaultStyles.transition,
-              });
-            }
+            records.push({
+              componentType: type,
+              label: identity.label || type,
+              selector: `${selector}:nth-of-type(${i + 1})`,
+              index: i + 1,
+              nameHint,
+              tag: identity.tag,
+              role: identity.role,
+              classes: identity.classes,
+              ariaLabel: identity.ariaLabel,
+              screenshots: {
+                default: `screens/states/${defaultFile}`,
+                hover: hoverFile ? `screens/states/${hoverFile}` : undefined,
+                focus: focusFile ? `screens/states/${focusFile}` : undefined,
+              },
+              defaultStyles,
+              hoverStyles: hoverStyles || undefined,
+              focusStyles: focusStyles || undefined,
+              hoverChanges,
+              focusChanges,
+              transitionValue: defaultStyles.transition,
+            });
           } catch { /* element failed — skip */ }
         }
       } catch { /* selector failed — skip */ }
@@ -169,18 +213,37 @@ export async function captureInteractions(
 async function getStyles(el: any): Promise<StyleSnapshot> {
   return el.evaluate((node: Element) => {
     const s = window.getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
     return {
       backgroundColor: s.backgroundColor,
+      backgroundImage: s.backgroundImage,
       color: s.color,
       borderColor: s.borderColor,
+      borderStyle: s.borderStyle,
       borderWidth: s.borderWidth,
+      borderRadius: s.borderRadius,
+      padding: s.padding,
+      gap: s.gap,
       boxShadow: s.boxShadow,
+      textShadow: s.textShadow,
       opacity: s.opacity,
       transform: s.transform,
+      filter: s.filter,
       outline: s.outline,
       outlineColor: s.outlineColor,
       textDecoration: s.textDecoration,
       transition: s.transition,
+      fontFamily: s.fontFamily,
+      fontSize: s.fontSize,
+      fontWeight: s.fontWeight,
+      lineHeight: s.lineHeight,
+      letterSpacing: s.letterSpacing,
+      display: s.display,
+      alignItems: s.alignItems,
+      justifyContent: s.justifyContent,
+      width: `${Math.round(rect.width * 100) / 100}px`,
+      height: `${Math.round(rect.height * 100) / 100}px`,
+      cursor: s.cursor,
     };
   });
 }
@@ -198,7 +261,7 @@ function diffStyles(before: StyleSnapshot, after: StyleSnapshot): StyleDiff[] {
   for (const prop of TRACKED_PROPS) {
     const b = before[prop] || '';
     const a = after[prop] || '';
-    if (b !== a && a !== '' && a !== 'none' && a !== 'normal') {
+    if (b !== a && a !== '') {
       diffs.push({ property: prop, from: b, to: a });
     }
   }

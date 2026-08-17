@@ -3,6 +3,7 @@ import type {
   ComponentEvidence,
   ComponentEvidenceSource,
   ComponentInfo,
+  ComponentStateEvidence,
   DesignProfile,
   TailwindPattern,
 } from '../types';
@@ -59,6 +60,8 @@ export function componentInfoToEvidence(
     classes: [...component.cssClasses],
     instances: component.instances ?? 1,
     structureFingerprint: `${component.category}:${name}:${classFingerprint}`,
+    measuredStyle: component.measuredStyle,
+    stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
     htmlSnippet: component.jsxSnippet || undefined,
     confidence,
     reasons: [
@@ -97,6 +100,9 @@ export function domComponentToEvidence(
       : undefined,
     instances: component.instances,
     structureFingerprint: component.pattern,
+    styleFingerprint: component.styleFingerprint,
+    measuredStyle: component.measuredStyle,
+    stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
     htmlSnippet: component.htmlSnippet,
     confidence,
     reasons: [
@@ -108,6 +114,8 @@ export function domComponentToEvidence(
               ? `runtime structure classified as ${component.category}`
               : 'runtime structure did not match a semantic component category',
           ]),
+      ...(component.measuredStyle ? ['representative default computed style measured from rendered DOM'] : []),
+      ...(component.stateEvidence?.length ? [`${component.stateEvidence.length} interaction state observation(s) matched to component`] : []),
     ],
   };
 }
@@ -131,7 +139,8 @@ export function shouldPromoteRuntimeEvidence(evidence: ComponentEvidence): boole
  * This intentionally performs conservative deduplication. Exact normalized
  * names are merged. Generic semantic kinds (Button/Card/etc.) may merge with a
  * matching generic component only when category evidence agrees. Distinct
- * runtime patterns stay distinct rather than being over-collapsed.
+ * runtime patterns stay distinct as evidence even when they normalize to one
+ * canonical component name.
  */
 export function mergeComponentEvidence(
   existingComponents: ComponentInfo[],
@@ -190,6 +199,7 @@ export function buildComponentCategories(
 
 function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
   if (component.evidence?.length) {
+    const measured = summarizeMeasuredEvidence(component.evidence);
     return {
       ...component,
       evidence: [...component.evidence],
@@ -199,6 +209,8 @@ function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
       animationDetails: [...component.animationDetails],
       statePatterns: [...component.statePatterns],
       pages: component.pages ? [...component.pages] : undefined,
+      measuredStyle: measured.measuredStyle,
+      stateEvidence: measured.stateEvidence,
       tailwindPatterns: cloneTailwindPattern(component.tailwindPatterns),
     };
   }
@@ -216,6 +228,8 @@ function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
     instances: component.instances ?? evidence.instances,
     pages: component.pages ? [...component.pages] : undefined,
     confidence: component.confidence ?? evidence.confidence,
+    measuredStyle: component.measuredStyle,
+    stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
     evidence: [evidence],
   };
 }
@@ -260,6 +274,8 @@ function mergeEvidenceIntoComponent(
     evidenceList.push(evidence);
   }
 
+  const measured = summarizeMeasuredEvidence(evidenceList);
+
   return {
     ...component,
     category: component.category === 'other' && evidence.categoryHint
@@ -270,6 +286,11 @@ function mergeEvidenceIntoComponent(
     instances: Math.max(component.instances ?? 1, evidence.instances),
     pages: pages.size > 0 ? [...pages] : undefined,
     confidence: Math.max(component.confidence ?? 0, evidence.confidence),
+    // Flatten only when all measured runtime observations agree on one style.
+    // Conflicting variants remain available in evidence[] and must not be
+    // presented as one universal canonical default/state pair.
+    measuredStyle: measured.measuredStyle,
+    stateEvidence: measured.stateEvidence,
     evidence: evidenceList,
   };
 }
@@ -290,8 +311,51 @@ function componentFromEvidence(evidence: ComponentEvidence): ComponentInfo {
     instances: evidence.instances,
     pages: evidence.pageUrl ? [evidence.pageUrl] : undefined,
     confidence: evidence.confidence,
+    measuredStyle: evidence.measuredStyle,
+    stateEvidence: evidence.stateEvidence ? [...evidence.stateEvidence] : undefined,
     evidence: [evidence],
   };
+}
+
+function summarizeMeasuredEvidence(evidenceList: ComponentEvidence[]): {
+  measuredStyle?: ComponentInfo['measuredStyle'];
+  stateEvidence?: ComponentStateEvidence[];
+} {
+  const measured = evidenceList.filter(evidence => evidence.measuredStyle);
+  if (measured.length === 0) return {};
+
+  const byStyle = new Map<string, ComponentEvidence[]>();
+  for (const evidence of measured) {
+    const key = measuredStyleKey(evidence);
+    const group = byStyle.get(key) || [];
+    group.push(evidence);
+    byStyle.set(key, group);
+  }
+
+  if (byStyle.size !== 1) {
+    // Multiple measured variants: keep them on their individual evidence
+    // records instead of manufacturing a misleading aggregate default/state.
+    return {};
+  }
+
+  const group = [...byStyle.values()][0];
+  return {
+    measuredStyle: group[0].measuredStyle,
+    stateEvidence: mergeStateEvidence(
+      undefined,
+      group.flatMap(evidence => evidence.stateEvidence || [])
+    ),
+  };
+}
+
+function measuredStyleKey(evidence: ComponentEvidence): string {
+  if (evidence.styleFingerprint) return evidence.styleFingerprint;
+  const style = evidence.measuredStyle;
+  if (!style) return 'unmeasured';
+  return Object.keys(style)
+    .sort()
+    .map(key => `${key}:${style[key as keyof typeof style]}`)
+    .join('|');
 }
 
 function inferKindFromComponent(component: ComponentInfo): string {
@@ -343,6 +407,26 @@ function sameEvidence(a: ComponentEvidence, b: ComponentEvidence): boolean {
   return a.source === b.source
     && a.pageUrl === b.pageUrl
     && a.structureFingerprint === b.structureFingerprint;
+}
+
+function mergeStateEvidence(
+  left?: ComponentStateEvidence[],
+  right?: ComponentStateEvidence[]
+): ComponentStateEvidence[] | undefined {
+  const all = [...(left || []), ...(right || [])];
+  if (all.length === 0) return undefined;
+
+  const seen = new Set<string>();
+  return all.filter(state => {
+    const changes = state.changes
+      .map(change => `${change.property}:${change.from}->${change.to}`)
+      .sort()
+      .join('|');
+    const key = `${state.state}|${state.selector || ''}|${changes}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function overlapRatio(a: string[], b: string[]): number {

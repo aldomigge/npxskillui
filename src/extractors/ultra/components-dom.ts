@@ -1,3 +1,4 @@
+import type { ComponentStyleSnapshot } from '../../types';
 import { DOMComponent } from '../../types-ultra';
 import { loadPlaywright } from '../../playwright-loader';
 import {
@@ -10,6 +11,7 @@ interface RawDOMGroup extends DOMCandidateSummary {
   pattern: string;
   instances: number;
   htmlSnippet: string;
+  measuredStyle: ComponentStyleSnapshot;
 }
 
 /**
@@ -19,8 +21,8 @@ interface RawDOMGroup extends DOMCandidateSummary {
  * - browser: collect rendered structure, HTML/ARIA semantics, classes, ancestry
  * - node: classify with semantic HTML/ARIA first, class naming second
  *
- * High-confidence semantic controls may be retained even when unique. Generic
- * structural patterns still require repetition before they become candidates.
+ * PR #6 also records a representative default-state computed style for each
+ * runtime group. These values are measured source evidence, not generated CSS.
  */
 export async function detectDOMComponents(url: string): Promise<DOMComponent[]> {
   const playwright = loadPlaywright();
@@ -51,6 +53,37 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
         inputType?: string;
         htmlSnippet: string;
         semanticSignal: boolean;
+        measuredStyle: {
+          backgroundColor: string;
+          backgroundImage: string;
+          color: string;
+          borderColor: string;
+          borderStyle: string;
+          borderWidth: string;
+          borderRadius: string;
+          padding: string;
+          gap: string;
+          boxShadow: string;
+          textShadow: string;
+          opacity: string;
+          transform: string;
+          filter: string;
+          outline: string;
+          outlineColor: string;
+          textDecoration: string;
+          transition: string;
+          fontFamily: string;
+          fontSize: string;
+          fontWeight: string;
+          lineHeight: string;
+          letterSpacing: string;
+          display: string;
+          alignItems: string;
+          justifyContent: string;
+          width: string;
+          height: string;
+          cursor: string;
+        };
       };
 
       function stableClasses(el: Element): string[] {
@@ -118,6 +151,42 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
         return { tags, roles };
       }
 
+      function measuredStyle(el: Element) {
+        const s = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return {
+          backgroundColor: s.backgroundColor,
+          backgroundImage: s.backgroundImage,
+          color: s.color,
+          borderColor: s.borderColor,
+          borderStyle: s.borderStyle,
+          borderWidth: s.borderWidth,
+          borderRadius: s.borderRadius,
+          padding: s.padding,
+          gap: s.gap,
+          boxShadow: s.boxShadow,
+          textShadow: s.textShadow,
+          opacity: s.opacity,
+          transform: s.transform,
+          filter: s.filter,
+          outline: s.outline,
+          outlineColor: s.outlineColor,
+          textDecoration: s.textDecoration,
+          transition: s.transition,
+          fontFamily: s.fontFamily,
+          fontSize: s.fontSize,
+          fontWeight: s.fontWeight,
+          lineHeight: s.lineHeight,
+          letterSpacing: s.letterSpacing,
+          display: s.display,
+          alignItems: s.alignItems,
+          justifyContent: s.justifyContent,
+          width: `${Math.round(rect.width * 100) / 100}px`,
+          height: `${Math.round(rect.height * 100) / 100}px`,
+          cursor: s.cursor,
+        };
+      }
+
       function hasSemanticSignal(el: Element, classes: string[]): boolean {
         const tag = el.tagName.toLowerCase();
         const role = (el.getAttribute('role') || '').toLowerCase();
@@ -183,6 +252,7 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
           inputType: el instanceof HTMLInputElement ? el.type : undefined,
           htmlSnippet: htmlSnippet(el),
           semanticSignal,
+          measuredStyle: measuredStyle(el),
         });
       });
 
@@ -209,6 +279,8 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
           role: group.role,
           confidence: classification.confidence,
           reasons: classification.reasons,
+          measuredStyle: group.measuredStyle,
+          styleFingerprint: fingerprintMeasuredStyle(group.measuredStyle),
           attributes: {
             ariaLabel: group.ariaLabel,
             ariaRole: group.role,
@@ -231,4 +303,22 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
     await browser.close().catch(() => {});
     return [];
   }
+}
+
+function fingerprintMeasuredStyle(style: ComponentStyleSnapshot): string {
+  return [
+    style.backgroundColor,
+    style.backgroundImage,
+    style.color,
+    style.borderColor,
+    style.borderWidth,
+    style.borderRadius,
+    style.padding,
+    style.boxShadow,
+    style.fontFamily,
+    style.fontSize,
+    style.fontWeight,
+    style.lineHeight,
+    style.display,
+  ].join('|');
 }

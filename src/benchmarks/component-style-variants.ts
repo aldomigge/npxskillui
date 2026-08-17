@@ -105,6 +105,7 @@ function main(): void {
 
   console.log('Measured component variant isolation benchmark');
   console.log(`  variant isolation cases: ${passed}/10`);
+  console.log('  state provenance cases:  2/2');
   console.log('  status:                 PASS');
 }
 

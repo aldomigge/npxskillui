@@ -160,7 +160,19 @@ function runVisibilitySummaryCases(): Result {
   expect(summary.changes.some(item => item.property === 'display' && item.selector === 'div.AppSocials_content__cSXpe'), 'strong structural changes must never be removed by visibility condensation'); passed++;
   expectEqual(summary.changes.filter(item => item.selector.includes('AppSocials') && item.property === 'visibility').length, 2, 'different component families should retain their own representatives'); passed++;
 
-  return { passed, total: 6 };
+  const stateful = summarizeResponsiveChanges([
+    change('div.swiper-slide:nth-of-type(4) > article.yt-lite', 'visibility', 'hidden', 'visible'),
+    change('div.TabsBlock_tab-content__coj7A > article.yt-lite', 'visibility', 'visible', 'hidden'),
+    change('div.carousel-track > div.Card_card__abc', 'visibility', 'visible', 'hidden'),
+    change('nav.HeaderNavigation_nav__TI4f3', 'visibility', 'visible', 'hidden'),
+    change('div.swiper-slide > div.Card_card__abc', 'display', 'grid', 'flex'),
+  ]);
+  expectEqual(stateful.omittedStatefulVisibilityChanges, 3, 'stateful carousel/tab/media visibility should be excluded and counted separately'); passed++;
+  expect(!stateful.changes.some(item => item.selector.includes('yt-lite') && item.property === 'visibility'), 'lazy media visibility should not become a high-confidence responsive claim'); passed++;
+  expect(stateful.changes.some(item => item.selector.includes('HeaderNavigation') && item.property === 'visibility'), 'real navigation visibility evidence should remain'); passed++;
+  expect(stateful.changes.some(item => item.selector.includes('swiper-slide') && item.property === 'display'), 'strong structural evidence inside a stateful surface must remain'); passed++;
+
+  return { passed, total: 10 };
 }
 
 function element(

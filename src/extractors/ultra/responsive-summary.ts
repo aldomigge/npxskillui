@@ -12,9 +12,19 @@ const UTILITY_FAMILIES = new Set([
   'Container',
 ]);
 
+const STATEFUL_VISIBILITY_PATTERNS = [
+  /(?:^|[.\s>_-])swiper(?:[-_]|\b)/i,
+  /(?:^|[.\s>_-])carousel(?:[-_]|\b)/i,
+  /(?:^|[.\s>_-])slider(?:[-_]|\b)/i,
+  /TabsBlock_tab-content__/i,
+  /(?:^|[.\s>_-])tab-content(?:__|[-_]|\b)/i,
+  /(?:^|[.\s>_-])yt-lite(?:[.#:\s>]|$)/i,
+];
+
 export interface ResponsiveChangeSummary {
   changes: ResponsiveChange[];
   omittedVisibilityChanges: number;
+  omittedStatefulVisibilityChanges: number;
 }
 
 /**
@@ -25,6 +35,11 @@ export interface ResponsiveChangeSummary {
  * layout decision, not independent responsive rules. Keep a small number of
  * shallow representatives per CSS-module family + transition direction while
  * preserving display/flex/grid/position changes verbatim.
+ *
+ * Visibility-only changes inside known stateful UI surfaces (carousel/slider,
+ * tab-content, lazy YouTube media) are excluded from high-confidence responsive
+ * claims. Their visible state can vary with autoplay, active tab, hydration, or
+ * timing independently of viewport size. Screenshots still preserve that state.
  */
 export function summarizeResponsiveChanges(
   changes: ResponsiveChange[],
@@ -33,9 +48,11 @@ export function summarizeResponsiveChanges(
   const indexed = changes.map((change, index) => ({ change, index }));
   const structural = indexed.filter(item => item.change.property !== 'visibility');
   const visibility = indexed.filter(item => item.change.property === 'visibility');
+  const stableVisibility = visibility.filter(item => !isStatefulVisibilitySelector(item.change.selector));
+  const omittedStatefulVisibilityChanges = visibility.length - stableVisibility.length;
 
-  const groups = new Map<string, typeof visibility>();
-  for (const item of visibility) {
+  const groups = new Map<string, typeof stableVisibility>();
+  for (const item of stableVisibility) {
     const family = responsiveSelectorFamily(item.change.selector);
     const key = `${family}|${item.change.from}|${item.change.to}`;
     const list = groups.get(key) || [];
@@ -43,7 +60,7 @@ export function summarizeResponsiveChanges(
     groups.set(key, list);
   }
 
-  const keptVisibility: typeof visibility = [];
+  const keptVisibility: typeof stableVisibility = [];
   const limit = Math.max(1, Math.round(maxVisibilityPerFamily));
 
   for (const group of groups.values()) {
@@ -55,7 +72,7 @@ export function summarizeResponsiveChanges(
       return a.index - b.index;
     });
 
-    const representatives: typeof visibility = [];
+    const representatives: typeof stableVisibility = [];
     for (const item of ranked) {
       const shadowedByAncestor = representatives.some(parent =>
         isAncestorSelector(parent.change.selector, item.change.selector)
@@ -71,8 +88,17 @@ export function summarizeResponsiveChanges(
   const kept = [...structural, ...keptVisibility].sort((a, b) => a.index - b.index);
   return {
     changes: kept.map(item => item.change),
-    omittedVisibilityChanges: Math.max(0, visibility.length - keptVisibility.length),
+    omittedVisibilityChanges: Math.max(0, stableVisibility.length - keptVisibility.length),
+    omittedStatefulVisibilityChanges,
   };
+}
+
+/**
+ * Stateful surfaces can change visibility from interaction/timing alone, so a
+ * visibility flip there is not high-confidence responsive evidence by itself.
+ */
+export function isStatefulVisibilitySelector(selector: string): boolean {
+  return STATEFUL_VISIBILITY_PATTERNS.some(pattern => pattern.test(selector));
 }
 
 /** Extract the first non-utility CSS-module family from a structural selector. */

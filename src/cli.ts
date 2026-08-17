@@ -9,6 +9,7 @@ import { parseResponsiveViewports } from './extractors/ultra/responsive.js';
 import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
 import { finalizeGeneratedSkill } from './writers/skill-finalizer.js';
+import { embedResponsiveEvidenceInSkill } from './writers/responsive-skill.js';
 import { configurePlaywrightBrowser } from './playwright-loader.js';
 import { installAgentIntegrations } from './agents/index.js';
 import { promptAgentTarget, showAgentLogo, showAgentResults } from './agents/ui.js';
@@ -213,6 +214,7 @@ program
         const spSkill = startSpinner('Bundling .skill package...');
         try {
           const generated = await generateSkill(profile, designMdContent, path.resolve(opts.out), screenshotPath, ultraAnimations);
+          embedResponsiveEvidenceInSkill(generated.skillDir);
           const result = await finalizeGeneratedSkill(profile, generated);
           skillFilePath = result.skillFile;
           succeedSpinner(spSkill, '.skill package', skillFilePath);

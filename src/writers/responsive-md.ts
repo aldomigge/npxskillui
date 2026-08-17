@@ -1,5 +1,5 @@
 import type { Breakpoint, DesignProfile } from '../types';
-import type { ResponsiveEvidenceResult } from '../types-ultra';
+import type { PageDiscoveryStats, ResponsiveEvidenceResult } from '../types-ultra';
 import { summarizeResponsiveChanges } from '../extractors/ultra/responsive-summary';
 
 export function generateResponsiveMd(
@@ -34,9 +34,7 @@ export function generateResponsiveMd(
 
   for (const page of result.pages) {
     for (const observation of page.observations) {
-      const growth = observation.discovery.grew
-        ? `yes (${observation.discovery.beforeElementCount}→${observation.discovery.afterElementCount})`
-        : 'no';
+      const growth = formatLazyGrowth(observation.discovery);
       md += `| \`${page.pageUrl}\` | \`${observation.viewport.key}\` | ${observation.domElementCount} | ${observation.documentWidth}×${observation.documentHeight}px | ${observation.horizontalOverflow ? '**yes**' : 'no'} | ${growth} | \`${observation.screenshotPath}\` |\n`;
     }
   }
@@ -97,6 +95,14 @@ export function generateResponsiveMd(
   md += `- Responsive evidence does not promote new canonical components in this extraction stage.\n`;
 
   return md;
+}
+
+function formatLazyGrowth(discovery: PageDiscoveryStats): string {
+  if (!discovery.grew) return 'no';
+
+  const elementDelta = `${discovery.beforeElementCount}→${discovery.afterElementCount} elements`;
+  const heightDelta = `${discovery.beforeHeight}→${discovery.afterHeight}px height`;
+  return `yes (${elementDelta}; ${heightDelta})`;
 }
 
 function renderSummaryNotes(summary: ReturnType<typeof summarizeResponsiveChanges>): string {

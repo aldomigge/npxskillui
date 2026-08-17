@@ -190,10 +190,10 @@ function runMeasuredStyleBenchmark(): { passed: number; total: number } {
 
   const button: DOMComponent = {
     name: 'Button',
-    pattern: 'button|role=|type=[Button_btn](span{})',
+    pattern: 'button|role=|type=[Button_btn.Button_blue](span{})',
     instances: 2,
-    commonClasses: ['Button_btn__abc'],
-    htmlSnippet: '<button class="Button_btn__abc">Play</button>',
+    commonClasses: ['Button_btn__abc', 'Button_blue__def'],
+    htmlSnippet: '<button class="Button_btn__abc Button_blue__def">Play</button>',
     category: 'button',
     tag: 'button',
     confidence: 0.98,
@@ -253,7 +253,7 @@ function runMeasuredStyleBenchmark(): { passed: number; total: number } {
   expectEqual(evidence.measuredStyle?.fontFamily, defaultStyle.fontFamily, 'measured style should propagate into ComponentEvidence'); passed++;
 
   const normalized = mergeComponentEvidence([], [evidence])[0];
-  expectEqual(normalized.stateEvidence?.length, 2, 'matched states should propagate into normalized ComponentInfo'); passed++;
+  expectEqual(normalized.stateEvidence?.length, 2, 'matched states should propagate into unambiguous ComponentInfo'); passed++;
 
   return { passed, total: 6 };
 }

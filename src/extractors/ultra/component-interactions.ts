@@ -1,11 +1,12 @@
-import type { ComponentStateEvidence } from '../../types';
+import type { ComponentStateEvidence, ComponentStyleSnapshot } from '../../types';
 import type { DOMComponent, InteractionRecord } from '../../types-ultra';
 
 /**
  * Attach independently captured hover/focus observations to Runtime Component
  * Detector records. Matching is conservative: named components can match by
  * exact semantic name, but generic names such as Button/Input additionally
- * require strong class identity so states from sibling variants are not mixed.
+ * require strong class or measured-style identity so sibling variants are not
+ * mixed together.
  */
 export function attachInteractionsToDOMComponents(
   components: DOMComponent[],
@@ -51,7 +52,7 @@ function matchScore(component: DOMComponent, interaction: InteractionRecord): nu
     hasPrimaryIdentity = true;
   } else if (exactName) {
     // Generic labels like "Button" are shared by multiple style/state variants.
-    // They can strengthen a class match but are not sufficient identity alone.
+    // They can strengthen a variant match but are not sufficient identity alone.
     score += 1;
   }
 
@@ -67,8 +68,13 @@ function matchScore(component: DOMComponent, interaction: InteractionRecord): nu
     hasPrimaryIdentity = true;
   } else if (overlap >= 0.5) {
     // Partial overlap is supporting evidence only. This intentionally rejects
-    // enabled/disabled Button variants that merely share their base classes.
+    // enabled/disabled variants that merely share their base classes.
     score += 2;
+  }
+
+  if (component.measuredStyle && sameMeasuredVariantStyle(component.measuredStyle, interaction.defaultStyles)) {
+    score += 8;
+    hasPrimaryIdentity = true;
   }
 
   if (component.tag && interaction.tag && component.tag === interaction.tag) score += 1;
@@ -143,6 +149,32 @@ function sameClassSet(left: string[], right: string[]): boolean {
   if (left.length === 0 || right.length === 0 || left.length !== right.length) return false;
   const rightSet = new Set(right);
   return left.every(className => rightSet.has(className));
+}
+
+function sameMeasuredVariantStyle(left: ComponentStyleSnapshot, right: ComponentStyleSnapshot): boolean {
+  const identityProperties: Array<keyof ComponentStyleSnapshot> = [
+    'backgroundColor',
+    'backgroundImage',
+    'color',
+    'borderColor',
+    'borderStyle',
+    'borderWidth',
+    'borderRadius',
+    'padding',
+    'gap',
+    'boxShadow',
+    'opacity',
+    'transform',
+    'filter',
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'lineHeight',
+    'display',
+    'cursor',
+    'transition',
+  ];
+  return identityProperties.every(property => left[property] === right[property]);
 }
 
 function isGenericComponentName(name: string): boolean {

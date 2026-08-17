@@ -3,9 +3,9 @@ import type { DOMComponent, InteractionRecord } from '../../types-ultra';
 
 /**
  * Attach independently captured hover/focus observations to Runtime Component
- * Detector records. Matching is conservative: exact normalized names and/or
- * stable class overlap are the primary identity signals; tag/category only
- * strengthen an existing match and are not sufficient on their own.
+ * Detector records. Matching is conservative: named components can match by
+ * exact semantic name, but generic names such as Button/Input additionally
+ * require strong class identity so states from sibling variants are not mixed.
  */
 export function attachInteractionsToDOMComponents(
   components: DOMComponent[],
@@ -39,19 +39,43 @@ export function matchInteractionToComponent(
 
 function matchScore(component: DOMComponent, interaction: InteractionRecord): number {
   let score = 0;
+  let hasPrimaryIdentity = false;
+
   const componentName = normalize(component.name);
   const interactionName = normalize(interaction.nameHint || '');
+  const exactName = Boolean(componentName && interactionName && componentName === interactionName);
+  const genericName = isGenericComponentName(componentName);
 
-  if (componentName && interactionName && componentName === interactionName) score += 6;
+  if (exactName && !genericName) {
+    score += 6;
+    hasPrimaryIdentity = true;
+  } else if (exactName) {
+    // Generic labels like "Button" are shared by multiple style/state variants.
+    // They can strengthen a class match but are not sufficient identity alone.
+    score += 1;
+  }
 
   const overlap = classOverlap(component.commonClasses, interaction.classes);
-  if (overlap > 0) score += 2 + overlap * 6;
+  const jaccard = classJaccard(component.commonClasses, interaction.classes);
+  const exactClasses = sameClassSet(component.commonClasses, interaction.classes);
+
+  if (exactClasses && component.commonClasses.length > 0) {
+    score += 8;
+    hasPrimaryIdentity = true;
+  } else if (overlap >= 0.75 && jaccard >= 0.6) {
+    score += 6;
+    hasPrimaryIdentity = true;
+  } else if (overlap >= 0.5) {
+    // Partial overlap is supporting evidence only. This intentionally rejects
+    // enabled/disabled Button variants that merely share their base classes.
+    score += 2;
+  }
 
   if (component.tag && interaction.tag && component.tag === interaction.tag) score += 1;
   if (component.role && interaction.role && component.role === interaction.role) score += 1;
   if (categoryCompatible(component.category, interaction.componentType)) score += 1;
 
-  return score;
+  return hasPrimaryIdentity ? score : 0;
 }
 
 function statesFromInteraction(interaction: InteractionRecord): ComponentStateEvidence[] {
@@ -105,6 +129,34 @@ function classOverlap(left: string[], right: string[]): number {
   const leftSet = new Set(left);
   const common = right.filter(className => leftSet.has(className)).length;
   return common / Math.min(left.length, right.length);
+}
+
+function classJaccard(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0;
+  const union = new Set([...left, ...right]);
+  const rightSet = new Set(right);
+  const common = new Set(left.filter(className => rightSet.has(className))).size;
+  return common / union.size;
+}
+
+function sameClassSet(left: string[], right: string[]): boolean {
+  if (left.length === 0 || right.length === 0 || left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every(className => rightSet.has(className));
+}
+
+function isGenericComponentName(name: string): boolean {
+  return new Set([
+    'button',
+    'btn',
+    'input',
+    'field',
+    'formfield',
+    'link',
+    'navitem',
+    'menuitem',
+    'tab',
+  ]).has(name);
 }
 
 function categoryCompatible(

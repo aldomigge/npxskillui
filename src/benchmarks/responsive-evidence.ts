@@ -1,5 +1,6 @@
 import type {
   PageScreenshot,
+  ResponsiveChange,
   ResponsiveElementSnapshot,
   ResponsiveViewportObservation,
 } from '../types-ultra';
@@ -10,18 +11,21 @@ import {
   parseResponsiveViewports,
   shouldReportGridTemplateChange,
 } from '../extractors/ultra/responsive';
+import { summarizeResponsiveChanges } from '../extractors/ultra/responsive-summary';
 
 function main(): void {
   const parsing = runParsingCases();
   const planning = runPlanningCases();
   const diffing = runDiffCases();
   const grouping = runGroupingCases();
+  const summarizing = runVisibilitySummaryCases();
 
   console.log('Responsive runtime evidence benchmark');
   console.log(`  viewport parsing cases: ${parsing.passed}/${parsing.total}`);
   console.log(`  surface planning cases: ${planning.passed}/${planning.total}`);
   console.log(`  structural diff cases: ${diffing.passed}/${diffing.total}`);
   console.log(`  evidence grouping cases: ${grouping.passed}/${grouping.total}`);
+  console.log(`  visibility summary cases: ${summarizing.passed}/${summarizing.total}`);
   console.log('  status:                 PASS');
 }
 
@@ -131,6 +135,34 @@ function runGroupingCases(): Result {
   return { passed, total: 6 };
 }
 
+function runVisibilitySummaryCases(): Result {
+  const root = 'div.HeaderServerSelector_wrap__FQQW6';
+  const changes: ResponsiveChange[] = [
+    change(root, 'visibility', 'visible', 'hidden'),
+    change(`${root} > div.Flex_flex__KsGCE`, 'visibility', 'visible', 'hidden'),
+    change('div.HeaderServerSelector_servers-list__OPYZ6 > div.Flex_flex__KsGCE:nth-of-type(1)', 'visibility', 'visible', 'hidden'),
+    change('div.HeaderServerSelector_servers-list__OPYZ6 > div.Flex_flex__KsGCE:nth-of-type(2)', 'visibility', 'visible', 'hidden'),
+    change('nav.HeaderNavigation_nav__TI4f3 > a.HeaderNavigation_item__gMA78', 'visibility', 'visible', 'hidden'),
+    change('div.HeaderNavigation_mobile__abc > div.HeaderNavigation_mobile-submenu-title__vWqdJ:nth-of-type(1)', 'visibility', 'hidden', 'visible'),
+    change('div.HeaderNavigation_mobile__abc > div.HeaderNavigation_mobile-submenu-title__vWqdJ:nth-of-type(2)', 'visibility', 'hidden', 'visible'),
+    change('div.AppSocials_wrapper__S5O1p > div.AppSocials_right-side__KEsv7:nth-of-type(1)', 'visibility', 'visible', 'hidden'),
+    change('div.AppSocials_wrapper__S5O1p > div.AppSocials_right-side__KEsv7:nth-of-type(2)', 'visibility', 'visible', 'hidden'),
+    change('div.AppSocials_wrapper__S5O1p > div.AppSocials_right-side__KEsv7:nth-of-type(3)', 'visibility', 'visible', 'hidden'),
+    change('div.AppSocials_content__cSXpe', 'display', 'grid', 'flex'),
+  ];
+
+  const summary = summarizeResponsiveChanges(changes);
+  let passed = 0;
+  expectEqual(summary.omittedVisibilityChanges, 3, 'visibility cascades should report condensed evidence count'); passed++;
+  expectEqual(summary.changes.filter(item => item.selector.includes('HeaderServerSelector') && item.property === 'visibility').length, 2, 'one component family/direction should keep at most two visibility representatives'); passed++;
+  expect(!summary.changes.some(item => item.selector === `${root} > div.Flex_flex__KsGCE`), 'a descendant shadowed by a retained ancestor should be removed'); passed++;
+  expectEqual(summary.changes.filter(item => item.selector.includes('HeaderNavigation_mobile') && item.property === 'visibility').length, 2, 'opposite-direction mobile navigation evidence should remain independently represented'); passed++;
+  expect(summary.changes.some(item => item.property === 'display' && item.selector === 'div.AppSocials_content__cSXpe'), 'strong structural changes must never be removed by visibility condensation'); passed++;
+  expectEqual(summary.changes.filter(item => item.selector.includes('AppSocials') && item.property === 'visibility').length, 2, 'different component families should retain their own representatives'); passed++;
+
+  return { passed, total: 6 };
+}
+
 function element(
   key: string,
   visible: boolean,
@@ -149,6 +181,15 @@ function element(
     gridTemplateColumns,
     position,
   };
+}
+
+function change(
+  selector: string,
+  property: ResponsiveChange['property'],
+  from: string,
+  to: string
+): ResponsiveChange {
+  return { selector, property, from, to };
 }
 
 function observation(

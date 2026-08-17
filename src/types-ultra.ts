@@ -6,9 +6,17 @@ import type {
 
 // ── Ultra Mode Types ─────────────────────────────────────────────────
 
+export interface ResponsiveViewport {
+  width: number;
+  height: number;
+  key: string;
+}
+
 export interface UltraOptions {
   /** Max pages to crawl (default: 5) */
   screens: number;
+  /** Optional sampled viewports for responsive runtime evidence. */
+  viewports?: ResponsiveViewport[];
 }
 
 // ── Runtime discovery ────────────────────────────────────────────────
@@ -26,6 +34,66 @@ export interface RuntimeDiscoveryPage {
   url: string;
   componentCount: number;
   discovery: PageDiscoveryStats;
+}
+
+// ── Responsive evidence ──────────────────────────────────────────────
+
+export type ResponsiveChangeProperty =
+  | 'visibility'
+  | 'display'
+  | 'flex-direction'
+  | 'grid-template-columns'
+  | 'position';
+
+export interface ResponsiveElementSnapshot {
+  key: string;
+  selector: string;
+  tag: string;
+  visible: boolean;
+  display: string;
+  flexDirection: string;
+  gridTemplateColumns: string;
+  position: string;
+}
+
+export interface ResponsiveViewportObservation {
+  pageUrl: string;
+  pageSlug: string;
+  pageTitle: string;
+  viewport: ResponsiveViewport;
+  screenshotPath: string;
+  domElementCount: number;
+  documentWidth: number;
+  documentHeight: number;
+  horizontalOverflow: boolean;
+  discovery: PageDiscoveryStats;
+  elements: ResponsiveElementSnapshot[];
+}
+
+export interface ResponsiveChange {
+  selector: string;
+  property: ResponsiveChangeProperty;
+  from: string;
+  to: string;
+}
+
+export interface ResponsiveComparison {
+  baseline: ResponsiveViewport;
+  target: ResponsiveViewport;
+  changes: ResponsiveChange[];
+}
+
+export interface ResponsivePageEvidence {
+  pageUrl: string;
+  pageSlug: string;
+  pageTitle: string;
+  observations: ResponsiveViewportObservation[];
+  comparisons: ResponsiveComparison[];
+}
+
+export interface ResponsiveEvidenceResult {
+  viewports: ResponsiveViewport[];
+  pages: ResponsivePageEvidence[];
 }
 
 // ── Screenshots ─────────────────────────────────────────────────────
@@ -202,12 +270,12 @@ export interface VideoInfo {
 export interface ScrollAnimationPattern {
   selector: string;
   library: string;                   // 'gsap' | 'aos' | 'intersection-observer' | 'css' | 'lottie'
-  attribute?: string;                // e.g. data-aos="fade-up"
-  animationType: string;             // 'fade-in' | 'slide-up' | 'scale' | 'parallax' | 'sticky' | etc.
+  attribute?: string;
+  animationType: string;
   duration?: string;
   delay?: string;
   easing?: string;
-  count: number;                     // how many elements share this pattern
+  count: number;
 }
 
 export interface CSSAnimationVar {

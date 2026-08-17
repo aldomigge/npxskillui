@@ -10,7 +10,8 @@ export function generateResponsiveMd(
   md += `> Measured from rendered pages at explicitly sampled viewport sizes.\n`;
   md += `> A sampled viewport is evidence of what happened at that size; it is **not** proof of the exact CSS breakpoint where the change begins.\n`;
   md += `> Structural comparisons intentionally ignore ordinary fluid geometry changes and uncorroborated DOM presence/absence differences.\n`;
-  md += `> Repeated descendant visibility flips are condensed into representative component-family transitions so one hidden parent does not dominate the report.\n\n`;
+  md += `> Repeated descendant visibility flips are condensed into representative component-family transitions so one hidden parent does not dominate the report.\n`;
+  md += `> Visibility-only changes inside stateful carousel/tab/lazy-media surfaces are excluded from high-confidence responsive claims because active state and timing can change them independently of viewport size.\n\n`;
 
   if (result.pages.length === 0 || result.viewports.length === 0) {
     md += `No responsive runtime samples were captured.\n`;
@@ -65,6 +66,7 @@ export function generateResponsiveMd(
 
       if (renderedChanges.length === 0) {
         md += `No high-confidence tracked structural changes were measured between these two samples.\n\n`;
+        md += renderSummaryNotes(summary);
         continue;
       }
 
@@ -75,9 +77,7 @@ export function generateResponsiveMd(
       }
       md += `\n`;
 
-      if (summary.omittedVisibilityChanges > 0) {
-        md += `> Condensed ${summary.omittedVisibilityChanges} redundant descendant/same-family visibility transition(s). Screenshots preserve the complete visual context.\n\n`;
-      }
+      md += renderSummaryNotes(summary);
       if (renderedChanges.length > 40) {
         md += `> ${renderedChanges.length - 40} additional summarized structural changes were omitted from this compact table.\n\n`;
       }
@@ -89,12 +89,24 @@ export function generateResponsiveMd(
   md += `- Do not infer an exact breakpoint threshold from two sampled viewport sizes. Use declared CSS breakpoints when available.\n`;
   md += `- A hidden/visible transition for the same structural identity is stronger evidence than a geometry change.\n`;
   md += `- Repeated child visibility changes caused by the same component-family transition are condensed; they are not counted as independent responsive rules.\n`;
+  md += `- Visibility-only changes inside known stateful carousel/slider/tab-content/lazy-media surfaces are not promoted as high-confidence responsive evidence.\n`;
   md += `- A node present in only one runtime sample is not promoted as responsive evidence because lazy loading, carousel state, or timing can also change DOM presence.\n`;
   md += `- Flex/grid/display/position changes are structural evidence; ordinary fluid width/height changes are intentionally not listed as mode switches.\n`;
   md += `- Grid column evidence is reported only when the measured number of tracks changes; pixel resizing with the same track count is treated as fluid geometry.\n`;
   md += `- Horizontal overflow is a warning signal to inspect the screenshot; it is not automatically a source-site defect.\n`;
   md += `- Responsive evidence does not promote new canonical components in this extraction stage.\n`;
 
+  return md;
+}
+
+function renderSummaryNotes(summary: ReturnType<typeof summarizeResponsiveChanges>): string {
+  let md = '';
+  if (summary.omittedVisibilityChanges > 0) {
+    md += `> Condensed ${summary.omittedVisibilityChanges} redundant descendant/same-family visibility transition(s). Screenshots preserve the complete visual context.\n\n`;
+  }
+  if (summary.omittedStatefulVisibilityChanges > 0) {
+    md += `> Ignored ${summary.omittedStatefulVisibilityChanges} visibility-only transition(s) inside stateful carousel/tab/lazy-media surfaces. Screenshots preserve the observed state.\n\n`;
+  }
   return md;
 }
 

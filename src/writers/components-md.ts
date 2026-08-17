@@ -1,4 +1,4 @@
-import { DOMComponent } from '../types-ultra';
+import type { DOMComponent, RuntimeDiscoveryPage } from '../types-ultra';
 import type {
   ComponentInfo,
   ComponentStateEvidence,
@@ -13,6 +13,7 @@ interface MeasuredObservation {
   states?: ComponentStateEvidence[];
   structureFingerprint?: string;
   styleFingerprint?: string;
+  pages: string[];
 }
 
 /**
@@ -21,17 +22,37 @@ interface MeasuredObservation {
  * Keeps evidence layers explicit:
  * - canonical components promoted into DesignProfile
  * - measured runtime style variants/states attached to their exact observations
+ * - multipage provenance for canonical and raw evidence
  * - raw runtime DOM candidates emitted by the detector
  */
 export function generateComponentsMd(
   domComponents: DOMComponent[],
-  profile: DesignProfile
+  profile: DesignProfile,
+  runtimeDiscovery: RuntimeDiscoveryPage[] = []
 ): string {
   let md = `# Component Reference\n\n`;
   md += `> Canonical components are observations promoted into the normalized design profile.\n`;
   md += `> Measured styles come from rendered runtime observations and outrank token-derived recipes.\n`;
   md += `> Multiple measured variants of one canonical component remain separate; do not mix their default/hover/focus states.\n`;
+  md += `> Runtime evidence may come from multiple crawled pages after bounded scroll/lazy-load stabilization.\n`;
   md += `> Raw runtime DOM candidates are detector observations for inspection; they are not automatically canonical components.\n\n`;
+
+  if (runtimeDiscovery.length > 0) {
+    md += `## Runtime Discovery Coverage\n\n`;
+    md += `The component detector reused the successfully crawled page corpus. Each page was scrolled in bounded passes and returned to the top before default styles were measured.\n\n`;
+    md += `| Page | Raw Patterns | Scroll Passes | DOM Elements | Height | Lazy Growth |\n`;
+    md += `|------|--------------|---------------|--------------|--------|-------------|\n`;
+    for (const page of runtimeDiscovery) {
+      const stats = page.discovery;
+      const elementDelta = stats.afterElementCount - stats.beforeElementCount;
+      const heightDelta = stats.afterHeight - stats.beforeHeight;
+      const growth = stats.grew
+        ? `yes (+${Math.max(0, elementDelta)} elements, +${Math.max(0, heightDelta)}px)`
+        : 'no';
+      md += `| \`${page.url}\` | ${page.componentCount} | ${stats.scrollPasses} | ${stats.beforeElementCount} → ${stats.afterElementCount} | ${stats.beforeHeight}px → ${stats.afterHeight}px | ${growth} |\n`;
+    }
+    md += `\n`;
+  }
 
   // ── Canonical inventory ─────────────────────────────────────────────
   md += `## Canonical Components\n\n`;
@@ -39,15 +60,16 @@ export function generateComponentsMd(
   if (profile.components.length === 0) {
     md += `No component observations were promoted into the canonical design profile.\n\n`;
   } else {
-    md += `These are the component records that downstream DESIGN.md / SKILL.md guidance may treat as extracted component evidence.\n\n`;
-    md += `| Component | Category | Confidence | Instances | Measured | States | Evidence Sources |\n`;
-    md += `|-----------|----------|------------|-----------|----------|--------|------------------|\n`;
+    md += `These are the component records that downstream DESIGN.md / SKILL.md guidance may treat as extracted component evidence. Instance count is the highest count observed on one page, not a sum across pages.\n\n`;
+    md += `| Component | Category | Confidence | Max/Page | Pages | Measured | States | Evidence Sources |\n`;
+    md += `|-----------|----------|------------|----------|-------|----------|--------|------------------|\n`;
 
     for (const component of profile.components) {
       const confidence = component.confidence != null
         ? `${Math.round(component.confidence * 100)}%`
         : 'n/a';
       const instances = component.instances != null ? `${component.instances}×` : 'n/a';
+      const pageCount = component.pages?.length || 0;
       const sources = component.evidence?.length
         ? [...new Set(component.evidence.map(e => e.source))].join(', ')
         : inferLegacySource(component.filePath);
@@ -61,7 +83,7 @@ export function generateComponentsMd(
         ? [...new Set(observations.flatMap(observation => observation.states || []).map(state => state.state))].join(', ') || 'none'
         : 'none';
 
-      md += `| **${component.name}** | ${component.category} | ${confidence} | ${instances} | ${measured} | ${states} | ${sources} |\n`;
+      md += `| **${component.name}** | ${component.category} | ${confidence} | ${instances} | ${pageCount || 'n/a'} | ${measured} | ${states} | ${sources} |\n`;
     }
     md += `\n`;
   }
@@ -79,15 +101,15 @@ export function generateComponentsMd(
 
   // ── Raw runtime-DOM inventory ───────────────────────────────────────
   md += `## Raw Runtime DOM Candidates\n\n`;
-  md += `> High-confidence semantic HTML/ARIA observations may appear once. Structural/class-only candidates require repetition. Raw candidates remain evidence even when the promotion policy rejects them.\n\n`;
+  md += `> High-confidence semantic HTML/ARIA observations may appear once. Structural/class-only candidates require repetition. Raw candidates remain evidence even when the promotion policy rejects them. \`Max/Page\` is the largest per-page count; \`Total\` is the sum across pages for this exact structure + measured-style observation.\n\n`;
 
   if (domComponents.length === 0) {
     md += `No runtime DOM candidates detected (Playwright required).\n`;
     return md;
   }
 
-  md += `| Candidate | Detector Category | Confidence | Instances | Measured | States | Semantic | Key Classes |\n`;
-  md += `|-----------|-------------------|------------|-----------|----------|--------|----------|-------------|\n`;
+  md += `| Candidate | Detector Category | Confidence | Max/Page | Total | Pages | Measured | States | Semantic | Key Classes |\n`;
+  md += `|-----------|-------------------|------------|----------|-------|-------|----------|--------|----------|-------------|\n`;
   for (const component of domComponents) {
     const classes = component.commonClasses.slice(0, 3).map(className => `\`.${className}\``).join(', ');
     const confidence = component.confidence != null ? `${Math.round(component.confidence * 100)}%` : 'n/a';
@@ -98,7 +120,9 @@ export function generateComponentsMd(
     const states = component.stateEvidence?.length
       ? [...new Set(component.stateEvidence.map(state => state.state))].join(', ')
       : 'none';
-    md += `| **${component.name}** | ${component.category} | ${confidence} | ${component.instances}× | ${measured} | ${states} | ${semantic} | ${classes} |\n`;
+    const total = component.totalInstances ?? component.instances;
+    const pageCount = component.pages?.length || 1;
+    md += `| **${component.name}** | ${component.category} | ${confidence} | ${component.instances}× | ${total}× | ${pageCount} | ${measured} | ${states} | ${semantic} | ${classes} |\n`;
   }
   md += `\n`;
 
@@ -126,7 +150,13 @@ export function generateComponentsMd(
 
     for (const component of components) {
       md += `### ${component.name}\n\n`;
-      md += `**Instances found:** ${component.instances}\n\n`;
+      md += `**Max instances on one page:** ${component.instances}\n\n`;
+      if ((component.totalInstances ?? component.instances) !== component.instances) {
+        md += `**Total instances across observed pages:** ${component.totalInstances}\n\n`;
+      }
+      if (component.pages?.length) {
+        md += `**Observed pages (${component.pages.length}):** ${component.pages.map(page => `\`${page}\``).join(', ')}\n\n`;
+      }
       if (component.confidence != null) md += `**Detector confidence:** ${Math.round(component.confidence * 100)}%\n\n`;
       if (component.tag || component.role) {
         md += `**Semantic evidence:** ${component.tag ? `\`<${component.tag}>\`` : ''}${component.tag && component.role ? ', ' : ''}${component.role ? `\`role=${component.role}\`` : ''}\n\n`;
@@ -167,6 +197,8 @@ export function generateComponentsMd(
   md += `## Component Evidence Rules\n\n`;
   md += `- Treat the **Canonical Components** table as the normalized component inventory.\n`;
   md += `- **Measured component styles and matched hover/focus states outrank token-derived recipes.**\n`;
+  md += `- Page provenance matters: a component may be global or route-specific; do not assume one-page observations are universal.\n`;
+  md += `- Canonical instance counts are per-page maxima. Raw totals are separately labeled and must not be confused with simultaneous instances.\n`;
   md += `- When a canonical component has multiple measured variants, keep each default style and its hover/focus states together; do not merge them into one synthetic style.\n`;
   md += `- Width/height measurements describe the observed extraction viewport; do not blindly hard-code them.\n`;
   md += `- Treat **Raw Runtime DOM Candidates** as detector evidence, not proof that every candidate is a reusable component.\n`;
@@ -191,9 +223,10 @@ function getMeasuredObservations(component: ComponentInfo): MeasuredObservation[
       states: evidence.stateEvidence ? [...evidence.stateEvidence] : undefined,
       structureFingerprint: evidence.structureFingerprint,
       styleFingerprint: evidence.styleFingerprint,
+      pages: evidence.pageUrl ? [evidence.pageUrl] : [],
     }));
 
-  const observations = runtimeEvidence.length > 0
+  const observations: MeasuredObservation[] = runtimeEvidence.length > 0
     ? runtimeEvidence
     : component.measuredStyle
       ? [{
@@ -201,16 +234,31 @@ function getMeasuredObservations(component: ComponentInfo): MeasuredObservation[
           instances: component.instances || 1,
           style: component.measuredStyle,
           states: component.stateEvidence ? [...component.stateEvidence] : undefined,
+          pages: component.pages ? [...component.pages] : [],
         }]
       : [];
 
-  const seen = new Set<string>();
-  return observations.filter(observation => {
+  const grouped = new Map<string, MeasuredObservation>();
+  for (const observation of observations) {
     const key = `${observation.structureFingerprint || ''}|${observation.styleFingerprint || styleKey(observation.style)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...observation,
+        classes: [...observation.classes],
+        states: observation.states ? [...observation.states] : undefined,
+        pages: [...observation.pages],
+      });
+      continue;
+    }
+
+    existing.instances = Math.max(existing.instances, observation.instances);
+    existing.classes = unique([...existing.classes, ...observation.classes]);
+    existing.pages = unique([...existing.pages, ...observation.pages]);
+    existing.states = mergeStates(existing.states, observation.states);
+  }
+
+  return [...grouped.values()];
 }
 
 function renderCanonicalMeasuredComponent(component: ComponentInfo): string {
@@ -229,7 +277,10 @@ function renderCanonicalMeasuredComponent(component: ComponentInfo): string {
     if (observation.classes.length > 0) {
       md += `**Observed classes:** ${observation.classes.map(className => `\`.${className}\``).join(' ')}\n\n`;
     }
-    md += `**Instances in this observation:** ${observation.instances}\n\n`;
+    if (observation.pages.length > 0) {
+      md += `**Observed pages (${observation.pages.length}):** ${observation.pages.map(page => `\`${page}\``).join(', ')}\n\n`;
+    }
+    md += `**Max instances on one observed page:** ${observation.instances}\n\n`;
     md += `**Measured default style:**\n\n`;
     md += renderMeasuredStyleBlock(observation.style);
     md += `**Observed geometry:** ${observation.style.width} × ${observation.style.height}\n\n`;
@@ -302,6 +353,25 @@ function styleKey(style: ComponentStyleSnapshot): string {
     .sort()
     .map(key => `${key}:${style[key as keyof ComponentStyleSnapshot]}`)
     .join('|');
+}
+
+function mergeStates(
+  left?: ComponentStateEvidence[],
+  right?: ComponentStateEvidence[]
+): ComponentStateEvidence[] | undefined {
+  const all = [...(left || []), ...(right || [])];
+  if (all.length === 0) return undefined;
+  const seen = new Set<string>();
+  return all.filter(state => {
+    const changes = state.changes
+      .map(change => `${change.property}:${change.from}->${change.to}`)
+      .sort()
+      .join('|');
+    const key = `${state.state}|${state.selector || ''}|${changes}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 interface TokenSet {
@@ -407,4 +477,8 @@ function groupBy<T>(arr: T[], key: (item: T) => string): Record<string, T[]> {
     acc[group].push(item);
     return acc;
   }, {} as Record<string, T[]>);
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }

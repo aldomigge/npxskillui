@@ -11,6 +11,23 @@ export interface UltraOptions {
   screens: number;
 }
 
+// ── Runtime discovery ────────────────────────────────────────────────
+
+export interface PageDiscoveryStats {
+  beforeElementCount: number;
+  afterElementCount: number;
+  beforeHeight: number;
+  afterHeight: number;
+  scrollPasses: number;
+  grew: boolean;
+}
+
+export interface RuntimeDiscoveryPage {
+  url: string;
+  componentCount: number;
+  discovery: PageDiscoveryStats;
+}
+
 // ── Screenshots ─────────────────────────────────────────────────────
 
 export interface PageScreenshot {
@@ -19,6 +36,8 @@ export interface PageScreenshot {
   /** Relative path inside skillDir: screens/pages/[slug].png */
   filePath: string;
   title: string;
+  /** Bounded scroll/lazy-load stabilization performed before capture. */
+  discovery?: PageDiscoveryStats;
 }
 
 export interface SectionScreenshot {
@@ -102,6 +121,7 @@ export type DOMComponentCategory =
 export interface DOMComponent {
   name: string;
   pattern: string;
+  /** Highest instance count observed on one page. */
   instances: number;
   commonClasses: string[];
   htmlSnippet: string;
@@ -120,6 +140,10 @@ export interface DOMComponent {
   styleFingerprint?: string;
   /** Hover/focus observations matched back from the interaction extractor. */
   stateEvidence?: ComponentStateEvidence[];
+  /** Normalized pages where this exact structure/style observation appeared. */
+  pages?: string[];
+  /** Sum of instances across page observations; does not replace per-page max. */
+  totalInstances?: number;
   attributes?: {
     ariaLabel?: string;
     ariaRole?: string;
@@ -211,5 +235,6 @@ export interface UltraResult {
   interactions: InteractionRecord[];
   layouts: LayoutRecord[];
   domComponents: DOMComponent[];
+  runtimeDiscovery: RuntimeDiscoveryPage[];
   animations: FullAnimationResult;
 }

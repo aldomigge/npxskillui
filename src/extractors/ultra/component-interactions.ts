@@ -86,6 +86,9 @@ function matchScore(component: DOMComponent, interaction: InteractionRecord): nu
 
 function statesFromInteraction(interaction: InteractionRecord): ComponentStateEvidence[] {
   const states: ComponentStateEvidence[] = [];
+  const label = interaction.pageUrl
+    ? `${interaction.label} @ ${interaction.pageUrl}`
+    : interaction.label;
 
   if (interaction.hoverStyles && interaction.hoverChanges.length > 0) {
     states.push({
@@ -93,8 +96,9 @@ function statesFromInteraction(interaction: InteractionRecord): ComponentStateEv
       style: interaction.hoverStyles,
       changes: interaction.hoverChanges,
       screenshot: interaction.screenshots.hover,
-      label: interaction.label,
+      label,
       selector: interaction.selector,
+      pageUrl: interaction.pageUrl,
     });
   }
 
@@ -104,8 +108,9 @@ function statesFromInteraction(interaction: InteractionRecord): ComponentStateEv
       style: interaction.focusStyles,
       changes: interaction.focusChanges,
       screenshot: interaction.screenshots.focus,
-      label: interaction.label,
+      label,
       selector: interaction.selector,
+      pageUrl: interaction.pageUrl,
     });
   }
 
@@ -121,7 +126,7 @@ function dedupeStates(states: ComponentStateEvidence[]): ComponentStateEvidence[
       .map(change => `${change.property}:${change.from}->${change.to}`)
       .sort()
       .join('|');
-    const key = `${state.state}|${state.selector || ''}|${changeFingerprint}`;
+    const key = `${state.state}|${state.pageUrl || ''}|${state.selector || ''}|${changeFingerprint}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(state);

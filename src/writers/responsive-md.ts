@@ -8,7 +8,7 @@ export function generateResponsiveMd(
   let md = `# Responsive Runtime Reference\n\n`;
   md += `> Measured from rendered pages at explicitly sampled viewport sizes.\n`;
   md += `> A sampled viewport is evidence of what happened at that size; it is **not** proof of the exact CSS breakpoint where the change begins.\n`;
-  md += `> Structural comparisons intentionally ignore ordinary fluid width/height changes and focus on visibility and layout-mode changes.\n\n`;
+  md += `> Structural comparisons intentionally ignore ordinary fluid geometry changes and uncorroborated DOM presence/absence differences.\n\n`;
 
   if (result.pages.length === 0 || result.viewports.length === 0) {
     md += `No responsive runtime samples were captured.\n`;
@@ -59,14 +59,14 @@ export function generateResponsiveMd(
       md += `#### ${comparison.target.key} vs ${comparison.baseline.key} baseline\n\n`;
 
       if (comparison.changes.length === 0) {
-        md += `No tracked structural changes were measured between these two samples.\n\n`;
+        md += `No high-confidence tracked structural changes were measured between these two samples.\n\n`;
         continue;
       }
 
       md += `| Element | Property | ${comparison.baseline.key} | ${comparison.target.key} |\n`;
       md += `|---------|----------|----------------|----------------|\n`;
       for (const change of comparison.changes.slice(0, 40)) {
-        md += `| \`${escapeCell(change.selector)}\` | ${change.property} | \`${escapeCell(change.from)}\` | \`${escapeCell(change.to)}\` |\n`;
+        md += `| \`${compactSelector(change.selector)}\` | ${change.property} | \`${escapeCell(change.from)}\` | \`${escapeCell(change.to)}\` |\n`;
       }
       md += `\n`;
       if (comparison.changes.length > 40) {
@@ -78,8 +78,10 @@ export function generateResponsiveMd(
   md += `## Responsive Evidence Rules\n\n`;
   md += `- Treat screenshots and measured structural changes as runtime evidence for the exact sampled viewport only.\n`;
   md += `- Do not infer an exact breakpoint threshold from two sampled viewport sizes. Use declared CSS breakpoints when available.\n`;
-  md += `- A hidden/visible transition is stronger evidence than a simple geometry change.\n`;
-  md += `- Flex/grid/display/position changes are structural evidence; ordinary fluid width and height changes are intentionally not listed as mode switches.\n`;
+  md += `- A hidden/visible transition for the same structural identity is stronger evidence than a geometry change.\n`;
+  md += `- A node present in only one runtime sample is not promoted as responsive evidence because lazy loading, carousel state, or timing can also change DOM presence.\n`;
+  md += `- Flex/grid/display/position changes are structural evidence; ordinary fluid width/height changes are intentionally not listed as mode switches.\n`;
+  md += `- Grid column evidence is reported only when the measured number of tracks changes; pixel resizing with the same track count is treated as fluid geometry.\n`;
   md += `- Horizontal overflow is a warning signal to inspect the screenshot; it is not automatically a source-site defect.\n`;
   md += `- Responsive evidence does not promote new canonical components in this extraction stage.\n`;
 
@@ -96,6 +98,12 @@ function renderBreakpoints(breakpoints: Breakpoint[]): string {
   return md;
 }
 
+function compactSelector(value: string): string {
+  const escaped = escapeCell(value);
+  if (escaped.length <= 120) return escaped;
+  return `${escaped.slice(0, 56)}…${escaped.slice(-56)}`;
+}
+
 function escapeCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/`/g, '\\`').slice(0, 120);
+  return value.replace(/\|/g, '\\|').replace(/`/g, '\\`');
 }

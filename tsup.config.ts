@@ -35,6 +35,7 @@ export default defineConfig({
   entry: {
     cli: 'src/cli.ts',
     'component-benchmark': 'src/benchmarks/component-evidence.ts',
+    'component-style-variant-benchmark': 'src/benchmarks/component-style-variants.ts',
   },
   format: ['cjs'],
   platform: 'node',

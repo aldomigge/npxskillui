@@ -5,6 +5,7 @@ import { runDirMode } from './modes/dir.js';
 import { runRepoMode } from './modes/repo.js';
 import { runUrlMode } from './modes/url.js';
 import { runUltraMode } from './modes/ultra.js';
+import { parseResponsiveViewports } from './extractors/ultra/responsive.js';
 import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
 import { finalizeGeneratedSkill } from './writers/skill-finalizer.js';
@@ -23,6 +24,8 @@ import {
   runInteractivePrompts,
 } from './ui.js';
 
+type ResponsiveCLIOptions = CLIOptions & { viewports?: string };
+
 const program = new Command();
 
 program
@@ -38,11 +41,12 @@ program
   .option('--format <format>', 'Output format: design-md | skill | both', 'both')
   .option('--mode <mode>', 'Extraction mode: default | ultra', 'default')
   .option('--screens <number>', 'Ultra mode: max pages to crawl (default: 5)', '5')
+  .option('--viewports <list>', 'Ultra mode: optional responsive samples, e.g. 390x844,768x1024,1440x900')
   .option('--browser <browser>', 'Playwright browser: chromium | chrome', 'chromium')
   .option('--headed', 'Run a launched Playwright browser with a visible window', false)
   .option('--cdp-endpoint <url>', 'Connect to an existing Chromium/Chrome browser over CDP')
   .option('--agent <agent>', 'Agent integration: claude | codex | both', 'claude')
-  .action(async (opts: CLIOptions) => {
+  .action(async (opts: ResponsiveCLIOptions) => {
     await showAgentLogo();
 
     const modes = [opts.dir, opts.repo, opts.url].filter(Boolean);
@@ -68,6 +72,14 @@ program
 
     if (!['claude', 'codex', 'both'].includes(opts.agent)) {
       console.error(`  Error: Unsupported agent "${opts.agent}". Use claude, codex, or both.\n`);
+      process.exit(1);
+    }
+
+    let responsiveViewports: ReturnType<typeof parseResponsiveViewports> = [];
+    try {
+      responsiveViewports = parseResponsiveViewports(opts.viewports);
+    } catch (error: any) {
+      console.error(`  Error: ${error.message || error}\n`);
       process.exit(1);
     }
 
@@ -163,7 +175,10 @@ program
         } else {
           const spAnim = startSpinner('Capturing scroll journey + animations...');
           try {
-            const ultraResult = await runUltraMode(opts.url!, profile, skillDir, { screens: ultraScreens });
+            const ultraResult = await runUltraMode(opts.url!, profile, skillDir, {
+              screens: ultraScreens,
+              viewports: responsiveViewports,
+            });
             ultraAnimations = ultraResult.animations;
             const kf = ultraAnimations.keyframes.length;
             const sf = ultraAnimations.scrollFrames.length;

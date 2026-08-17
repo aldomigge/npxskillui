@@ -60,6 +60,8 @@ export interface InteractionRecord {
   label: string;
   selector: string;
   index: number;
+  /** Exact page where this interaction was captured. */
+  pageUrl?: string;
   /** Stable identity signals used to link this interaction to DOMComponent. */
   nameHint?: string;
   tag?: string;

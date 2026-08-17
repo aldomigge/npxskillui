@@ -6,6 +6,7 @@ import {
   UltraResult,
   FullAnimationResult,
   RuntimeDiscoveryPage,
+  ResponsiveEvidenceResult,
 } from '../types-ultra';
 import { capturePageScreenshots } from '../extractors/ultra/pages';
 import { captureInteractions } from '../extractors/ultra/interactions';
@@ -13,6 +14,7 @@ import { extractLayouts } from '../extractors/ultra/layout';
 import { detectDOMComponentsWithDiscovery } from '../extractors/ultra/components-dom';
 import { attachInteractionsToDOMComponents } from '../extractors/ultra/component-interactions';
 import { captureAnimations } from '../extractors/ultra/animations';
+import { captureResponsiveEvidence } from '../extractors/ultra/responsive';
 import {
   buildRuntimeDiscoveryUrls,
   mergeDOMComponentObservations,
@@ -23,6 +25,7 @@ import { generateLayoutMd } from '../writers/layout-md';
 import { generateInteractionsMd } from '../writers/interactions-md';
 import { generateComponentsMd } from '../writers/components-md';
 import { generateAnimationsMd } from '../writers/animations-md';
+import { generateResponsiveMd } from '../writers/responsive-md';
 import { writeTokensJson } from '../writers/tokens-json';
 import { loadPlaywright } from '../playwright-loader';
 
@@ -34,10 +37,12 @@ import { loadPlaywright } from '../playwright-loader';
  * - screens/sections/   — clipped section screenshots per page
  * - screens/states/     — hover/focus state screenshots on the origin page
  * - screens/scroll/     — 7 scroll-journey screenshots + video first frames
+ * - screens/responsive/ — opt-in sampled viewport screenshots
  * - references/LAYOUT.md
  * - references/INTERACTIONS.md
  * - references/COMPONENTS.md
  * - references/ANIMATIONS.md
+ * - references/RESPONSIVE.md (when --viewports is supplied)
  * - tokens/colors.json
  * - tokens/spacing.json
  * - tokens/typography.json
@@ -47,6 +52,11 @@ import { loadPlaywright } from '../playwright-loader';
  * stabilized before detection. Canonical merging remains page-aware through
  * ComponentEvidence.pageUrl; raw documentation aggregates only exact
  * structure+style observations across pages.
+ *
+ * Responsive evidence is deliberately separate from canonical component
+ * promotion in this stage. It samples the same crawled pages at explicit
+ * viewport sizes and records measured structural changes without pretending
+ * those samples identify exact CSS breakpoint thresholds.
  */
 export async function runUltraMode(
   url: string,
@@ -86,13 +96,18 @@ export async function runUltraMode(
   // ── Step 2: Multi-page crawl + stabilized screenshots/sections ─────────
   const { pages, sections } = await capturePageScreenshots(url, skillDir, opts.screens);
 
-  // ── Step 3: Origin micro-interactions ──────────────────────────────────
+  // ── Step 3: Optional responsive runtime evidence ───────────────────────
+  const responsive: ResponsiveEvidenceResult = opts.viewports?.length
+    ? await captureResponsiveEvidence(pages, opts.viewports, skillDir)
+    : { viewports: [], pages: [] };
+
+  // ── Step 4: Origin micro-interactions ──────────────────────────────────
   const interactions = await captureInteractions(url, skillDir);
 
-  // ── Step 4: Origin layout extraction ───────────────────────────────────
+  // ── Step 5: Origin layout extraction ───────────────────────────────────
   const layouts = await extractLayouts(url);
 
-  // ── Step 5: Multi-page DOM components + measured runtime evidence ──────
+  // ── Step 6: Multi-page DOM components + measured runtime evidence ──────
   const runtimeUrls = buildRuntimeDiscoveryUrls(
     url,
     pages.map(page => page.url),
@@ -123,7 +138,7 @@ export async function runUltraMode(
 
   const domComponents = mergeDOMComponentObservations(pageObservations);
 
-  // ── Step 6: Write all reference files ─────────────────────────────────
+  // ── Step 7: Write all reference files ─────────────────────────────────
   const refsDir = path.join(skillDir, 'references');
 
   const animMd = generateAnimationsMd(animations, profile);
@@ -138,15 +153,20 @@ export async function runUltraMode(
   const componentsMd = generateComponentsMd(domComponents, profile, runtimeDiscovery);
   fs.writeFileSync(path.join(refsDir, 'COMPONENTS.md'), componentsMd, 'utf-8');
 
+  if (opts.viewports?.length) {
+    const responsiveMd = generateResponsiveMd(responsive, profile);
+    fs.writeFileSync(path.join(refsDir, 'RESPONSIVE.md'), responsiveMd, 'utf-8');
+  }
+
   writeTokensJson(profile, skillDir);
 
   const visualGuideMd = generateVisualGuideMd(profile, pages, sections, animations);
   fs.writeFileSync(path.join(refsDir, 'VISUAL_GUIDE.md'), visualGuideMd, 'utf-8');
 
-  writeScreensIndex(pages, sections, animations, skillDir);
+  writeScreensIndex(pages, sections, animations, responsive, skillDir);
 
   console.log(' ✓');
-  printUltraSummary(animations, runtimeDiscovery, domComponents.length);
+  printUltraSummary(animations, runtimeDiscovery, domComponents.length, responsive);
 
   return {
     pageScreenshots: pages,
@@ -239,7 +259,8 @@ function generateVisualGuideMd(
 function printUltraSummary(
   anim: FullAnimationResult,
   discoveryPages: RuntimeDiscoveryPage[],
-  rawComponentCount: number
+  rawComponentCount: number,
+  responsive: ResponsiveEvidenceResult
 ): void {
   const libs = anim.libraries.map(l => l.name).join(', ') || 'none';
   console.log('');
@@ -256,12 +277,18 @@ function printUltraSummary(
     const grew = discoveryPages.filter(page => page.discovery.grew).length;
     console.log(`  Runtime discovery: ${discoveryPages.length} page(s), ${rawComponentCount} raw pattern(s), ${grew} page(s) grew after scroll`);
   }
+  if (responsive.pages.length > 0) {
+    const samples = responsive.pages.reduce((total, page) => total + page.observations.length, 0);
+    const overflows = responsive.pages.flatMap(page => page.observations).filter(sample => sample.horizontalOverflow).length;
+    console.log(`  Responsive evidence: ${responsive.pages.length} page(s), ${responsive.viewports.length} viewport(s), ${samples} sample(s), ${overflows} overflow sample(s)`);
+  }
 }
 
 function writeScreensIndex(
   pages: import('../types-ultra').PageScreenshot[],
   sections: import('../types-ultra').SectionScreenshot[],
   anim: FullAnimationResult,
+  responsive: ResponsiveEvidenceResult,
   skillDir: string
 ): void {
   let md = `# Screenshot Index\n\n`;
@@ -296,6 +323,18 @@ function writeScreensIndex(
         ? `${p.discovery.scrollPasses} pass(es), ${p.discovery.beforeElementCount}→${p.discovery.afterElementCount} elements`
         : 'n/a';
       md += `| ${p.title} | \`${p.url}\` | ${discovery} | \`${p.filePath}\` |\n`;
+    }
+    md += `\n`;
+  }
+
+  if (responsive.pages.length > 0) {
+    md += `## Responsive Samples\n\n`;
+    md += `| Page | Viewport | Overflow | File |\n`;
+    md += `|------|----------|----------|------|\n`;
+    for (const page of responsive.pages) {
+      for (const sample of page.observations) {
+        md += `| ${page.pageTitle} | \`${sample.viewport.key}\` | ${sample.horizontalOverflow ? 'yes' : 'no'} | \`${sample.screenshotPath}\` |\n`;
+      }
     }
     md += `\n`;
   }

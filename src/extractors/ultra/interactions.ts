@@ -180,6 +180,7 @@ export async function captureInteractions(
               label: identity.label || type,
               selector: `${selector}:nth-of-type(${i + 1})`,
               index: i + 1,
+              pageUrl: url,
               nameHint,
               tag: identity.tag,
               role: identity.role,

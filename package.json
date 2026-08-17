@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsup",
     "start": "node dist/cli.js",
-    "benchmark:components": "npm run build && node dist/component-benchmark.js",
+    "benchmark:components": "npm run build && node dist/component-benchmark.js && node dist/component-style-variant-benchmark.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -70,7 +70,7 @@
     "@types/css-tree": "^2.3.0",
     "@types/gradient-string": "^1.1.6",
     "@types/node": "^20.0.0",
-    "@types/prompts": "^2.4.9",
+    "@types/prompts": "^7.0.33",
     "@types/tmp": "^0.2.6",
     "playwright": "^1.59.1",
     "typescript": "^5.4.0"

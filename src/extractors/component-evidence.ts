@@ -139,7 +139,8 @@ export function shouldPromoteRuntimeEvidence(evidence: ComponentEvidence): boole
  * This intentionally performs conservative deduplication. Exact normalized
  * names are merged. Generic semantic kinds (Button/Card/etc.) may merge with a
  * matching generic component only when category evidence agrees. Distinct
- * runtime patterns stay distinct rather than being over-collapsed.
+ * runtime patterns stay distinct as evidence even when they normalize to one
+ * canonical component name.
  */
 export function mergeComponentEvidence(
   existingComponents: ComponentInfo[],
@@ -198,6 +199,7 @@ export function buildComponentCategories(
 
 function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
   if (component.evidence?.length) {
+    const measured = summarizeMeasuredEvidence(component.evidence);
     return {
       ...component,
       evidence: [...component.evidence],
@@ -207,7 +209,8 @@ function seedComponentEvidence(component: ComponentInfo): ComponentInfo {
       animationDetails: [...component.animationDetails],
       statePatterns: [...component.statePatterns],
       pages: component.pages ? [...component.pages] : undefined,
-      stateEvidence: component.stateEvidence ? [...component.stateEvidence] : undefined,
+      measuredStyle: measured.measuredStyle,
+      stateEvidence: measured.stateEvidence,
       tailwindPatterns: cloneTailwindPattern(component.tailwindPatterns),
     };
   }
@@ -271,6 +274,8 @@ function mergeEvidenceIntoComponent(
     evidenceList.push(evidence);
   }
 
+  const measured = summarizeMeasuredEvidence(evidenceList);
+
   return {
     ...component,
     category: component.category === 'other' && evidence.categoryHint
@@ -281,8 +286,11 @@ function mergeEvidenceIntoComponent(
     instances: Math.max(component.instances ?? 1, evidence.instances),
     pages: pages.size > 0 ? [...pages] : undefined,
     confidence: Math.max(component.confidence ?? 0, evidence.confidence),
-    measuredStyle: evidence.measuredStyle || component.measuredStyle,
-    stateEvidence: mergeStateEvidence(component.stateEvidence, evidence.stateEvidence),
+    // Flatten only when all measured runtime observations agree on one style.
+    // Conflicting variants remain available in evidence[] and must not be
+    // presented as one universal canonical default/state pair.
+    measuredStyle: measured.measuredStyle,
+    stateEvidence: measured.stateEvidence,
     evidence: evidenceList,
   };
 }
@@ -307,6 +315,47 @@ function componentFromEvidence(evidence: ComponentEvidence): ComponentInfo {
     stateEvidence: evidence.stateEvidence ? [...evidence.stateEvidence] : undefined,
     evidence: [evidence],
   };
+}
+
+function summarizeMeasuredEvidence(evidenceList: ComponentEvidence[]): {
+  measuredStyle?: ComponentInfo['measuredStyle'];
+  stateEvidence?: ComponentStateEvidence[];
+} {
+  const measured = evidenceList.filter(evidence => evidence.measuredStyle);
+  if (measured.length === 0) return {};
+
+  const byStyle = new Map<string, ComponentEvidence[]>();
+  for (const evidence of measured) {
+    const key = measuredStyleKey(evidence);
+    const group = byStyle.get(key) || [];
+    group.push(evidence);
+    byStyle.set(key, group);
+  }
+
+  if (byStyle.size !== 1) {
+    // Multiple measured variants: keep them on their individual evidence
+    // records instead of manufacturing a misleading aggregate default/state.
+    return {};
+  }
+
+  const group = [...byStyle.values()][0];
+  return {
+    measuredStyle: group[0].measuredStyle,
+    stateEvidence: mergeStateEvidence(
+      undefined,
+      group.flatMap(evidence => evidence.stateEvidence || [])
+    ),
+  };
+}
+
+function measuredStyleKey(evidence: ComponentEvidence): string {
+  if (evidence.styleFingerprint) return evidence.styleFingerprint;
+  const style = evidence.measuredStyle;
+  if (!style) return 'unmeasured';
+  return Object.keys(style)
+    .sort()
+    .map(key => `${key}:${style[key as keyof typeof style]}`)
+    .join('|');
 }
 
 function inferKindFromComponent(component: ComponentInfo): string {

@@ -6,12 +6,21 @@ import type {
   DesignProfile,
 } from '../types';
 
+interface MeasuredObservation {
+  classes: string[];
+  instances: number;
+  style: ComponentStyleSnapshot;
+  states?: ComponentStateEvidence[];
+  structureFingerprint?: string;
+  styleFingerprint?: string;
+}
+
 /**
  * Generate references/COMPONENTS.md
  *
  * Keeps evidence layers explicit:
  * - canonical components promoted into DesignProfile
- * - measured runtime styles/states attached to canonical components
+ * - measured runtime style variants/states attached to their exact observations
  * - raw runtime DOM candidates emitted by the detector
  */
 export function generateComponentsMd(
@@ -20,7 +29,8 @@ export function generateComponentsMd(
 ): string {
   let md = `# Component Reference\n\n`;
   md += `> Canonical components are observations promoted into the normalized design profile.\n`;
-  md += `> Measured styles are computed from representative rendered instances and outrank token-derived recipes.\n`;
+  md += `> Measured styles come from rendered runtime observations and outrank token-derived recipes.\n`;
+  md += `> Multiple measured variants of one canonical component remain separate; do not mix their default/hover/focus states.\n`;
   md += `> Raw runtime DOM candidates are detector observations for inspection; they are not automatically canonical components.\n\n`;
 
   // ── Canonical inventory ─────────────────────────────────────────────
@@ -41,9 +51,14 @@ export function generateComponentsMd(
       const sources = component.evidence?.length
         ? [...new Set(component.evidence.map(e => e.source))].join(', ')
         : inferLegacySource(component.filePath);
-      const measured = component.measuredStyle ? 'yes' : 'no';
-      const states = component.stateEvidence?.length
-        ? [...new Set(component.stateEvidence.map(state => state.state))].join(', ')
+      const observations = getMeasuredObservations(component);
+      const measured = observations.length === 0
+        ? 'no'
+        : observations.length === 1
+          ? '1 observation'
+          : `${observations.length} variants`;
+      const states = observations.length > 0
+        ? [...new Set(observations.flatMap(observation => observation.states || []).map(state => state.state))].join(', ') || 'none'
         : 'none';
 
       md += `| **${component.name}** | ${component.category} | ${confidence} | ${instances} | ${measured} | ${states} | ${sources} |\n`;
@@ -52,10 +67,10 @@ export function generateComponentsMd(
   }
 
   // ── Canonical measured styles ────────────────────────────────────────
-  const measuredCanonical = profile.components.filter(component => component.measuredStyle);
+  const measuredCanonical = profile.components.filter(component => getMeasuredObservations(component).length > 0);
   if (measuredCanonical.length > 0) {
     md += `## Canonical Measured Component Styles\n\n`;
-    md += `> Values below come from \`getComputedStyle()\` on representative runtime instances. Use these before any token-derived recipe. Width/height are observed geometry at the extraction viewport, not fixed implementation requirements.\n\n`;
+    md += `> Values below come from \`getComputedStyle()\` on runtime instances. Use these before any token-derived recipe. Width/height are observed geometry at the extraction viewport, not fixed implementation requirements. When one canonical component has multiple measured variants, preserve each variant and its matched states separately.\n\n`;
 
     for (const component of measuredCanonical) {
       md += renderCanonicalMeasuredComponent(component);
@@ -130,7 +145,7 @@ export function generateComponentsMd(
       md += `\`\`\`\n\n`;
 
       if (component.measuredStyle) {
-        md += `**Measured default style (representative runtime instance):**\n\n`;
+        md += `**Measured default style (this runtime observation):**\n\n`;
         md += renderMeasuredStyleBlock(component.measuredStyle);
         md += `**Observed geometry:** ${component.measuredStyle.width} × ${component.measuredStyle.height}\n\n`;
         md += renderStates(component.stateEvidence);
@@ -152,6 +167,7 @@ export function generateComponentsMd(
   md += `## Component Evidence Rules\n\n`;
   md += `- Treat the **Canonical Components** table as the normalized component inventory.\n`;
   md += `- **Measured component styles and matched hover/focus states outrank token-derived recipes.**\n`;
+  md += `- When a canonical component has multiple measured variants, keep each default style and its hover/focus states together; do not merge them into one synthetic style.\n`;
   md += `- Width/height measurements describe the observed extraction viewport; do not blindly hard-code them.\n`;
   md += `- Treat **Raw Runtime DOM Candidates** as detector evidence, not proof that every candidate is a reusable component.\n`;
   md += `- Native HTML and explicit ARIA semantics outrank class-name guesses.\n`;
@@ -165,14 +181,61 @@ export function generateComponentsMd(
   return md;
 }
 
+function getMeasuredObservations(component: ComponentInfo): MeasuredObservation[] {
+  const runtimeEvidence = (component.evidence || [])
+    .filter(evidence => evidence.source === 'runtime-dom' && evidence.measuredStyle)
+    .map(evidence => ({
+      classes: [...evidence.classes],
+      instances: evidence.instances,
+      style: evidence.measuredStyle!,
+      states: evidence.stateEvidence ? [...evidence.stateEvidence] : undefined,
+      structureFingerprint: evidence.structureFingerprint,
+      styleFingerprint: evidence.styleFingerprint,
+    }));
+
+  const observations = runtimeEvidence.length > 0
+    ? runtimeEvidence
+    : component.measuredStyle
+      ? [{
+          classes: [...component.cssClasses],
+          instances: component.instances || 1,
+          style: component.measuredStyle,
+          states: component.stateEvidence ? [...component.stateEvidence] : undefined,
+        }]
+      : [];
+
+  const seen = new Set<string>();
+  return observations.filter(observation => {
+    const key = `${observation.structureFingerprint || ''}|${observation.styleFingerprint || styleKey(observation.style)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function renderCanonicalMeasuredComponent(component: ComponentInfo): string {
-  if (!component.measuredStyle) return '';
+  const observations = getMeasuredObservations(component);
+  if (observations.length === 0) return '';
 
   let md = `### ${component.name}\n\n`;
-  md += `**Measured default style:**\n\n`;
-  md += renderMeasuredStyleBlock(component.measuredStyle);
-  md += `**Observed geometry:** ${component.measuredStyle.width} × ${component.measuredStyle.height}\n\n`;
-  md += renderStates(component.stateEvidence);
+  if (observations.length > 1) {
+    md += `> ${observations.length} distinct measured runtime variants were observed for this canonical component. Do not treat any single variant as the universal default.\n\n`;
+  }
+
+  observations.forEach((observation, index) => {
+    if (observations.length > 1) {
+      md += `#### Measured variant ${index + 1}\n\n`;
+    }
+    if (observation.classes.length > 0) {
+      md += `**Observed classes:** ${observation.classes.map(className => `\`.${className}\``).join(' ')}\n\n`;
+    }
+    md += `**Instances in this observation:** ${observation.instances}\n\n`;
+    md += `**Measured default style:**\n\n`;
+    md += renderMeasuredStyleBlock(observation.style);
+    md += `**Observed geometry:** ${observation.style.width} × ${observation.style.height}\n\n`;
+    md += renderStates(observation.states);
+  });
+
   return md;
 }
 
@@ -216,7 +279,7 @@ function renderMeasuredStyleBlock(style: ComponentStyleSnapshot): string {
 function renderStates(states?: ComponentStateEvidence[]): string {
   if (!states?.length) return '';
 
-  let md = `**Matched interaction states:**\n\n`;
+  let md = `**Matched interaction states for this measured variant:**\n\n`;
   for (const state of states) {
     const label = state.label ? ` — ${state.label}` : '';
     md += `- **${state.state}${label}**`;
@@ -232,6 +295,13 @@ function renderStates(states?: ComponentStateEvidence[]): string {
   }
   md += `\n`;
   return md;
+}
+
+function styleKey(style: ComponentStyleSnapshot): string {
+  return Object.keys(style)
+    .sort()
+    .map(key => `${key}:${style[key as keyof ComponentStyleSnapshot]}`)
+    .join('|');
 }
 
 interface TokenSet {

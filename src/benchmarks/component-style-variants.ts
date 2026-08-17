@@ -51,6 +51,7 @@ function main(): void {
     label: 'REGISTRAR',
     selector: 'button:nth-of-type(1)',
     index: 1,
+    pageUrl: 'https://fixture.local/',
     nameHint: 'Button',
     tag: 'button',
     classes: ['Button_blue__abc', 'Button_btn__def', 'HeaderRightButtons_text-btn__ghi'],
@@ -78,6 +79,16 @@ function main(): void {
   let passed = 0;
   expectEqual(enabledResult.stateEvidence?.length, 2, 'enabled variant should receive hover/focus'); passed++;
   expectEqual(disabledResult.stateEvidence, undefined, 'disabled sibling variant must not receive enabled states'); passed++;
+  expectEqual(
+    enabledResult.stateEvidence?.every(state => state.pageUrl === 'https://fixture.local/'),
+    true,
+    'matched states should preserve their exact capture page'
+  ); passed++;
+  expectEqual(
+    enabledResult.stateEvidence?.every(state => state.label?.includes('https://fixture.local/')),
+    true,
+    'rendered state labels should expose capture-page provenance'
+  ); passed++;
 
   const merged = mergeComponentEvidence([], [
     domComponentToEvidence(enabledResult, 'https://fixture.local/'),
@@ -93,7 +104,8 @@ function main(): void {
   expectEqual(canonical.evidence?.[1]?.stateEvidence, undefined, 'disabled evidence should remain state-free'); passed++;
 
   console.log('Measured component variant isolation benchmark');
-  console.log(`  variant isolation cases: ${passed}/8`);
+  console.log(`  variant isolation cases: ${passed}/10`);
+  console.log('  state provenance cases:  2/2');
   console.log('  status:                 PASS');
 }
 

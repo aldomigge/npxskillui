@@ -1,11 +1,12 @@
 import type { ComponentStyleSnapshot } from '../../types';
-import { DOMComponent } from '../../types-ultra';
+import type { DOMComponent, PageDiscoveryStats } from '../../types-ultra';
 import { loadPlaywright } from '../../playwright-loader';
 import {
   classifyDOMCandidate,
   deriveDOMComponentName,
   type DOMCandidateSummary,
 } from './component-classifier';
+import { stabilizePageForDiscovery } from './discovery';
 
 interface RawDOMGroup extends DOMCandidateSummary {
   pattern: string;
@@ -14,19 +15,33 @@ interface RawDOMGroup extends DOMCandidateSummary {
   measuredStyle: ComponentStyleSnapshot;
 }
 
+export interface DOMComponentDetectionResult {
+  components: DOMComponent[];
+  discovery: PageDiscoveryStats;
+}
+
+/** Backward-compatible detector entry point. */
+export async function detectDOMComponents(url: string): Promise<DOMComponent[]> {
+  return (await detectDOMComponentsWithDiscovery(url)).components;
+}
+
 /**
- * Ultra mode — Runtime Component Detector v2
+ * Ultra mode — Runtime Component Detector v2 + bounded lazy discovery.
  *
  * Detection separates observation from classification:
- * - browser: collect rendered structure, HTML/ARIA semantics, classes, ancestry
+ * - browser: navigate, stabilize scroll/lazy content, then collect rendered DOM
  * - node: classify with semantic HTML/ARIA first, class naming second
+ * - measured style: capture representative default-state computed style
  *
- * PR #6 also records a representative default-state computed style for each
- * runtime group. These values are measured source evidence, not generated CSS.
+ * The page is returned to scrollTop=0 before styles are measured, so the lazy
+ * discovery pass does not intentionally turn a mid-scroll animation state into
+ * the default component style.
  */
-export async function detectDOMComponents(url: string): Promise<DOMComponent[]> {
+export async function detectDOMComponentsWithDiscovery(
+  url: string
+): Promise<DOMComponentDetectionResult> {
   const playwright = loadPlaywright();
-  if (!playwright) return [];
+  if (!playwright) return { components: [], discovery: emptyDiscoveryStats() };
 
   const browser = await playwright.chromium.launch({ headless: true });
   try {
@@ -38,7 +53,8 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
 
     const page = await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1200);
+    const discovery = await stabilizePageForDiscovery(page);
 
     const rawGroups = await page.evaluate(() => {
       type BrowserCandidate = {
@@ -298,10 +314,10 @@ export async function detectDOMComponents(url: string): Promise<DOMComponent[]> 
     await page.close();
     await browser.close();
 
-    return components;
+    return { components, discovery };
   } catch {
     await browser.close().catch(() => {});
-    return [];
+    return { components: [], discovery: emptyDiscoveryStats() };
   }
 }
 
@@ -321,4 +337,15 @@ function fingerprintMeasuredStyle(style: ComponentStyleSnapshot): string {
     style.lineHeight,
     style.display,
   ].join('|');
+}
+
+function emptyDiscoveryStats(): PageDiscoveryStats {
+  return {
+    beforeElementCount: 0,
+    afterElementCount: 0,
+    beforeHeight: 0,
+    afterHeight: 0,
+    scrollPasses: 0,
+    grew: false,
+  };
 }

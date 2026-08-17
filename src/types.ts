@@ -101,6 +101,8 @@ export interface ComponentStateEvidence {
   screenshot?: string;
   label?: string;
   selector?: string;
+  /** Exact page where this interaction state was measured. */
+  pageUrl?: string;
 }
 
 /**

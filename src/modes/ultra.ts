@@ -1,13 +1,23 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { DesignProfile } from '../types';
-import { UltraOptions, UltraResult, FullAnimationResult } from '../types-ultra';
+import {
+  UltraOptions,
+  UltraResult,
+  FullAnimationResult,
+  RuntimeDiscoveryPage,
+} from '../types-ultra';
 import { capturePageScreenshots } from '../extractors/ultra/pages';
 import { captureInteractions } from '../extractors/ultra/interactions';
 import { extractLayouts } from '../extractors/ultra/layout';
-import { detectDOMComponents } from '../extractors/ultra/components-dom';
+import { detectDOMComponentsWithDiscovery } from '../extractors/ultra/components-dom';
 import { attachInteractionsToDOMComponents } from '../extractors/ultra/component-interactions';
 import { captureAnimations } from '../extractors/ultra/animations';
+import {
+  buildRuntimeDiscoveryUrls,
+  mergeDOMComponentObservations,
+  normalizeDiscoveryUrl,
+} from '../extractors/ultra/discovery';
 import { mergeRuntimeComponentsIntoProfile } from '../extractors/component-evidence';
 import { generateLayoutMd } from '../writers/layout-md';
 import { generateInteractionsMd } from '../writers/interactions-md';
@@ -22,20 +32,21 @@ import { loadPlaywright } from '../playwright-loader';
  * Runs AFTER the normal url mode pipeline. Adds:
  * - screens/pages/      — full-page screenshots per crawled page
  * - screens/sections/   — clipped section screenshots per page
- * - screens/states/     — hover/focus state screenshots per interactive element
+ * - screens/states/     — hover/focus state screenshots on the origin page
  * - screens/scroll/     — 7 scroll-journey screenshots + video first frames
  * - references/LAYOUT.md
  * - references/INTERACTIONS.md
  * - references/COMPONENTS.md
- * - references/ANIMATIONS.md  ← NEW: cinematic animation documentation
+ * - references/ANIMATIONS.md
  * - tokens/colors.json
  * - tokens/spacing.json
  * - tokens/typography.json
  *
- * Runtime DOM components are also merged back into profile.components before
- * DESIGN.md/SKILL.md are generated, so all outputs use one normalized source.
- * Measured component styles and matched interaction states travel through that
- * same evidence path; token-derived recipes remain fallback-only guidance.
+ * Runtime component discovery reuses the successfully crawled screenshot pages
+ * instead of inventing a second route crawler. Each page is scroll/lazy-load
+ * stabilized before detection. Canonical merging remains page-aware through
+ * ComponentEvidence.pageUrl; raw documentation aggregates only exact
+ * structure+style observations across pages.
  */
 export async function runUltraMode(
   url: string,
@@ -43,7 +54,6 @@ export async function runUltraMode(
   skillDir: string,
   opts: UltraOptions
 ): Promise<UltraResult> {
-  // Ensure all output directories exist
   fs.mkdirSync(path.join(skillDir, 'screens', 'pages'), { recursive: true });
   fs.mkdirSync(path.join(skillDir, 'screens', 'sections'), { recursive: true });
   fs.mkdirSync(path.join(skillDir, 'screens', 'states'), { recursive: true });
@@ -59,62 +69,94 @@ export async function runUltraMode(
     writeTokensJson(profile, skillDir);
     writeStubs(skillDir);
     const emptyAnim = emptyAnimResult();
-    return { pageScreenshots: [], sectionScreenshots: [], interactions: [], layouts: [], domComponents: [], animations: emptyAnim };
+    return {
+      pageScreenshots: [],
+      sectionScreenshots: [],
+      interactions: [],
+      layouts: [],
+      domComponents: [],
+      runtimeDiscovery: [],
+      animations: emptyAnim,
+    };
   }
 
-  // ── Step 1: Animation extraction (scroll journey + keyframes + libraries) ──
+  // ── Step 1: Animation extraction (origin scroll journey) ───────────────
   const animations = await captureAnimations(url, skillDir);
 
-  // ── Step 2: Multi-page screenshots + section clips ─────────────────────
+  // ── Step 2: Multi-page crawl + stabilized screenshots/sections ─────────
   const { pages, sections } = await capturePageScreenshots(url, skillDir, opts.screens);
 
-  // ── Step 3: Micro-interactions ────────────────────────────────────────
+  // ── Step 3: Origin micro-interactions ──────────────────────────────────
   const interactions = await captureInteractions(url, skillDir);
 
-  // ── Step 4: Layout extraction ──────────────────────────────────────────
+  // ── Step 4: Origin layout extraction ───────────────────────────────────
   const layouts = await extractLayouts(url);
 
-  // ── Step 5: DOM components + measured styles + interaction evidence ───
-  const detectedComponents = await detectDOMComponents(url);
-  const domComponents = attachInteractionsToDOMComponents(detectedComponents, interactions);
-  mergeRuntimeComponentsIntoProfile(profile, domComponents, url);
+  // ── Step 5: Multi-page DOM components + measured runtime evidence ──────
+  const runtimeUrls = buildRuntimeDiscoveryUrls(
+    url,
+    pages.map(page => page.url),
+    opts.screens
+  );
+  const pageObservations: Array<{ url: string; components: import('../types-ultra').DOMComponent[] }> = [];
+  const runtimeDiscovery: RuntimeDiscoveryPage[] = [];
+  const originKey = normalizeDiscoveryUrl(url);
+
+  for (const pageUrl of runtimeUrls) {
+    const detection = await detectDOMComponentsWithDiscovery(pageUrl);
+    const isOriginPage = normalizeDiscoveryUrl(pageUrl) === originKey;
+    const pageComponents = isOriginPage
+      ? attachInteractionsToDOMComponents(detection.components, interactions)
+      : detection.components;
+
+    pageObservations.push({ url: pageUrl, components: pageComponents });
+    runtimeDiscovery.push({
+      url: normalizeDiscoveryUrl(pageUrl) || pageUrl,
+      componentCount: pageComponents.length,
+      discovery: detection.discovery,
+    });
+
+    // Merge per page rather than from the raw aggregate so pageUrl provenance
+    // and PR #6 measured-variant isolation remain exact.
+    mergeRuntimeComponentsIntoProfile(profile, pageComponents, pageUrl);
+  }
+
+  const domComponents = mergeDOMComponentObservations(pageObservations);
 
   // ── Step 6: Write all reference files ─────────────────────────────────
-
   const refsDir = path.join(skillDir, 'references');
 
-  // ANIMATIONS.md — cinematic motion documentation
   const animMd = generateAnimationsMd(animations, profile);
   fs.writeFileSync(path.join(refsDir, 'ANIMATIONS.md'), animMd, 'utf-8');
 
-  // LAYOUT.md
   const layoutMd = generateLayoutMd(layouts, profile);
   fs.writeFileSync(path.join(refsDir, 'LAYOUT.md'), layoutMd, 'utf-8');
 
-  // INTERACTIONS.md
   const interactionsMd = generateInteractionsMd(interactions, profile);
   fs.writeFileSync(path.join(refsDir, 'INTERACTIONS.md'), interactionsMd, 'utf-8');
 
-  // COMPONENTS.md
-  const componentsMd = generateComponentsMd(domComponents, profile);
+  const componentsMd = generateComponentsMd(domComponents, profile, runtimeDiscovery);
   fs.writeFileSync(path.join(refsDir, 'COMPONENTS.md'), componentsMd, 'utf-8');
 
-  // Token JSON files
   writeTokensJson(profile, skillDir);
 
-  // VISUAL_GUIDE.md — master visual reference embedding all screenshots
   const visualGuideMd = generateVisualGuideMd(profile, pages, sections, animations);
   fs.writeFileSync(path.join(refsDir, 'VISUAL_GUIDE.md'), visualGuideMd, 'utf-8');
 
-  // Ultra screenshot index
   writeScreensIndex(pages, sections, animations, skillDir);
 
   console.log(' ✓');
+  printUltraSummary(animations, runtimeDiscovery, domComponents.length);
 
-  // ── Print ultra summary ────────────────────────────────────────────────
-  printUltraSummary(animations);
-
-  return { pageScreenshots: pages, sectionScreenshots: sections, interactions, layouts, domComponents, animations };
+  return {
+    pageScreenshots: pages,
+    sectionScreenshots: sections,
+    interactions,
+    layouts,
+    domComponents,
+    runtimeDiscovery,
+    animations,
+  };
 }
 
 // ── Visual Guide Generator ────────────────────────────────────────────
@@ -170,6 +212,10 @@ function generateVisualGuideMd(
       const relPath = `../screens/pages/${path.basename(p.filePath)}`;
       md += `### ${p.title}\n\n`;
       md += `*URL: \`${p.url}\`*\n\n`;
+      if (p.discovery?.grew) {
+        const added = p.discovery.afterElementCount - p.discovery.beforeElementCount;
+        md += `*Lazy discovery: +${Math.max(0, added)} DOM elements after ${p.discovery.scrollPasses} bounded scroll pass(es).*\n\n`;
+      }
       md += `![${p.title}](${relPath})\n\n`;
     }
   }
@@ -190,7 +236,11 @@ function generateVisualGuideMd(
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-function printUltraSummary(anim: FullAnimationResult): void {
+function printUltraSummary(
+  anim: FullAnimationResult,
+  discoveryPages: RuntimeDiscoveryPage[],
+  rawComponentCount: number
+): void {
   const libs = anim.libraries.map(l => l.name).join(', ') || 'none';
   console.log('');
   console.log(`  Animation Stack: ${libs}`);
@@ -202,6 +252,10 @@ function printUltraSummary(anim: FullAnimationResult): void {
   if (anim.lottieCount > 0) console.log(`  Lottie: ${anim.lottieCount} players`);
   if (anim.keyframes.length > 0) console.log(`  Keyframes: ${anim.keyframes.length} extracted`);
   if (anim.scrollPatterns.length > 0) console.log(`  Scroll patterns: ${anim.scrollPatterns.length} types`);
+  if (discoveryPages.length > 0) {
+    const grew = discoveryPages.filter(page => page.discovery.grew).length;
+    console.log(`  Runtime discovery: ${discoveryPages.length} page(s), ${rawComponentCount} raw pattern(s), ${grew} page(s) grew after scroll`);
+  }
 }
 
 function writeScreensIndex(
@@ -235,10 +289,13 @@ function writeScreensIndex(
 
   if (pages.length > 0) {
     md += `## Pages\n\n`;
-    md += `| Page | URL | File |\n`;
-    md += `|------|-----|------|\n`;
+    md += `| Page | URL | Discovery | File |\n`;
+    md += `|------|-----|-----------|------|\n`;
     for (const p of pages) {
-      md += `| ${p.title} | \`${p.url}\` | \`${p.filePath}\` |\n`;
+      const discovery = p.discovery
+        ? `${p.discovery.scrollPasses} pass(es), ${p.discovery.beforeElementCount}→${p.discovery.afterElementCount} elements`
+        : 'n/a';
+      md += `| ${p.title} | \`${p.url}\` | ${discovery} | \`${p.filePath}\` |\n`;
     }
     md += `\n`;
   }

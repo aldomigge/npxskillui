@@ -62,7 +62,7 @@ function matchScore(component: DOMComponent, interaction: InteractionRecord): nu
   if (exactClasses && component.commonClasses.length > 0) {
     score += 8;
     hasPrimaryIdentity = true;
-  } else if (overlap >= 0.75 && jaccard >= 0.6) {
+  } else if (overlap >= 0.75 && jaccard >= 0.8) {
     score += 6;
     hasPrimaryIdentity = true;
   } else if (overlap >= 0.5) {

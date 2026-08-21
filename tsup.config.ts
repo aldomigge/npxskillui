@@ -39,6 +39,7 @@ export default defineConfig({
     'runtime-discovery-benchmark': 'src/benchmarks/runtime-discovery.ts',
     'responsive-evidence-benchmark': 'src/benchmarks/responsive-evidence.ts',
     'responsive-skill-paths-benchmark': 'src/benchmarks/responsive-skill-paths.ts',
+    'skill-context-benchmark': 'src/benchmarks/skill-context.ts',
   },
   format: ['cjs'],
   platform: 'node',

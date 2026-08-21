@@ -10,6 +10,7 @@ import { generateDesignMd } from './writers/design-md.js';
 import { generateSkill } from './writers/skill.js';
 import { finalizeGeneratedSkill } from './writers/skill-finalizer.js';
 import { embedResponsiveEvidenceInSkill } from './writers/responsive-skill.js';
+import { compactGeneratedSkill, parseSkillContextMode } from './writers/skill-context.js';
 import { configurePlaywrightBrowser } from './playwright-loader.js';
 import { installAgentIntegrations } from './agents/index.js';
 import { promptAgentTarget, showAgentLogo, showAgentResults } from './agents/ui.js';
@@ -25,7 +26,7 @@ import {
   runInteractivePrompts,
 } from './ui.js';
 
-type ResponsiveCLIOptions = CLIOptions & { viewports?: string };
+type ResponsiveCLIOptions = CLIOptions & { viewports?: string; skillContext?: string };
 
 const program = new Command();
 
@@ -47,6 +48,7 @@ program
   .option('--headed', 'Run a launched Playwright browser with a visible window', false)
   .option('--cdp-endpoint <url>', 'Connect to an existing Chromium/Chrome browser over CDP')
   .option('--agent <agent>', 'Agent integration: claude | codex | both', 'claude')
+  .option('--skill-context <mode>', 'Generated SKILL.md context: full | compact', 'full')
   .action(async (opts: ResponsiveCLIOptions) => {
     await showAgentLogo();
 
@@ -73,6 +75,14 @@ program
 
     if (!['claude', 'codex', 'both'].includes(opts.agent)) {
       console.error(`  Error: Unsupported agent "${opts.agent}". Use claude, codex, or both.\n`);
+      process.exit(1);
+    }
+
+    let skillContext: ReturnType<typeof parseSkillContextMode>;
+    try {
+      skillContext = parseSkillContextMode(opts.skillContext);
+    } catch (error: any) {
+      console.error(`  Error: ${error.message || error}\n`);
       process.exit(1);
     }
 
@@ -214,10 +224,18 @@ program
         const spSkill = startSpinner('Bundling .skill package...');
         try {
           const generated = await generateSkill(profile, designMdContent, path.resolve(opts.out), screenshotPath, ultraAnimations);
-          embedResponsiveEvidenceInSkill(generated.skillDir);
+          let contextDetail = '';
+
+          if (skillContext === 'compact') {
+            const metrics = compactGeneratedSkill(profile, generated.skillDir);
+            contextDetail = ` · compact ${metrics.lines} lines · ${metrics.characters} chars`;
+          } else {
+            embedResponsiveEvidenceInSkill(generated.skillDir);
+          }
+
           const result = await finalizeGeneratedSkill(profile, generated);
           skillFilePath = result.skillFile;
-          succeedSpinner(spSkill, '.skill package', skillFilePath);
+          succeedSpinner(spSkill, '.skill package', `${skillFilePath}${contextDetail}`);
 
           const integration = installAgentIntegrations(opts.agent, {
             skillDir: result.skillDir,

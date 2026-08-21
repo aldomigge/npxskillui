@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsup",
     "start": "node dist/cli.js",
-    "benchmark:components": "npm run build && node dist/component-benchmark.js && node dist/component-style-variant-benchmark.js && node dist/runtime-discovery-benchmark.js && node dist/responsive-evidence-benchmark.js && node dist/responsive-skill-paths-benchmark.js",
+    "benchmark:components": "npm run build && node dist/component-benchmark.js && node dist/component-style-variant-benchmark.js && node dist/runtime-discovery-benchmark.js && node dist/responsive-evidence-benchmark.js && node dist/responsive-skill-paths-benchmark.js && node dist/skill-context-benchmark.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -52,7 +52,7 @@
     "css-tree": "^2.3.1",
     "culori": "^4.0.0",
     "glob": "^10.3.0",
-    "gradient-string": "^3.0.0",
+    "gradient-string": "^5.6.2",
     "jiti": "^1.21.0",
     "oh-my-logo": "^0.4.0",
     "ora": "^8.2.0",
@@ -69,8 +69,8 @@
     "@types/css-tree": "^2.3.0",
     "@types/gradient-string": "^1.1.6",
     "@types/node": "^20.0.0",
-    "@types/prompts": "^2.4.9",
-    "@types/tmp": "^0.2.6",
+    "@types/prompts": "^8.2.0",
+    "@types/tmp": "^2.3.0",
     "playwright": "^1.59.1",
     "typescript": "^5.4.0"
   },

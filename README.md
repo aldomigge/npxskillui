@@ -109,6 +109,25 @@ This generates one shared design skill and installs the appropriate integration 
 
 SkillUI does **not** generate `AGENTS.md` for Codex. Codex discovers skills directly from `.agents/skills`; `AGENTS.md` remains available for repository-wide agent instructions when a project needs them, but it is not required for SkillUI design skills.
 
+### Skill context modes
+
+By default, SkillUI preserves the legacy **full** `SKILL.md`: reference documents, token JSON, and screenshot inventories are embedded inline so the root skill contains the whole corpus.
+
+For large extractions, especially Ultra/Codex workflows, use progressive disclosure instead:
+
+```bash
+skillui --url https://example.com --mode ultra --agent codex --skill-context compact
+```
+
+`--skill-context compact` keeps the extracted evidence files unchanged under `references/`, `tokens/`, and `screens/`, but replaces the root `SKILL.md` with a concise entry point containing essential tokens, evidence precedence, a detected-component index, and task-specific routing instructions. The agent reads detailed evidence only when the current task needs it.
+
+| Mode | Root `SKILL.md` | Detailed evidence | Best for |
+|---|---|---|---|
+| `full` | Embeds the full reference corpus | Also preserved as separate files | Backward compatibility and self-contained root context |
+| `compact` | Progressive-disclosure index + essentials | Preserved in `references/`, `tokens/`, `screens/` | Lower initial context/token usage for large skills |
+
+`full` remains the default so existing SkillUI behavior does not change.
+
 ---
 
 ## Modes
@@ -289,6 +308,7 @@ skillui --repo <url>          Clone and scan a git repository
 --headed                      Show the launched Playwright browser window
 --cdp-endpoint <url>          Attach to an existing Chromium/Chrome browser over CDP
 --agent claude|codex|both     Agent integration (default: claude)
+--skill-context full|compact  Root SKILL.md context strategy (default: full)
 --out <path>                  Output directory (default: ./)
 --name <string>               Override the project name
 --format design-md|skill|both Output format (default: both)
@@ -309,15 +329,19 @@ skillui --url https://nothing.tech --mode ultra --agent claude
 # Codex repository skill
 skillui --url https://nothing.tech --mode ultra --agent codex
 
+# Compact Codex skill: lower initial context, evidence loaded on demand
+skillui --url https://nothing.tech --mode ultra --agent codex --skill-context compact
+
 # Claude Code + Codex
 skillui --url https://nothing.tech --mode ultra --agent both
 
-# Codex + real Chrome over CDP
+# Codex + real Chrome over CDP + compact context
 skillui \
   --url https://nothing.tech \
   --mode ultra \
   --cdp-endpoint http://127.0.0.1:9222 \
-  --agent codex
+  --agent codex \
+  --skill-context compact
 
 # Generate directly into Codex's repository skill directory
 skillui \
@@ -344,6 +368,7 @@ SkillUI performs its design extraction locally and does not use AI or require AP
 - **Dir mode** — scans local source files for tokens, components, Tailwind configuration, and CSS variables
 - **Repo mode** — clones a public repository and runs dir mode
 - **Ultra mode** — captures scroll screenshots, animation metadata, layout structure, interaction states, and DOM component patterns
+- **Skill context layer** — `full` preserves the legacy all-in-one root context; `compact` keeps a concise root and routes the agent to detailed evidence on demand
 - **Agent layer** — keeps the generated `SKILL.md` shared, then installs agent-specific discovery integration for Claude Code, Codex, or both
 - **Codex integration** — copies the complete skill directory to `.agents/skills/<name>` and normalizes the skill `name` metadata for Codex discovery
 - **Claude integration** — preserves the original `~/.claude/skills/<name>/SKILL.md` installation and `CLAUDE.md` generation

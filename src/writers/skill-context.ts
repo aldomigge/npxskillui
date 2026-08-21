@@ -65,6 +65,9 @@ export function generateCompactSkillMd(profile: DesignProfile, skillDir: string)
   const references = discoverReferenceFiles(skillDir);
   const tokens = discoverTokenFiles(skillDir);
   const screenDirs = discoverScreenDirs(skillDir);
+  const referenceSet = new Set(references);
+  const tokenSet = new Set(tokens);
+  const screenSet = new Set(screenDirs);
 
   const colors = selectEssentialColors(profile);
   const typography = selectEssentialTypography(profile);
@@ -75,7 +78,7 @@ export function generateCompactSkillMd(profile: DesignProfile, skillDir: string)
 
   let md = `---\n`;
   md += `name: ${safeName}-design\n`;
-  md += `description: Compact design-system skill for ${profile.projectName}. Use progressive disclosure: start here, then read only the referenced evidence needed for the current UI task.\n`;
+  md += `description: Compact design-system skill for ${profile.projectName}. Start here and read only the referenced evidence needed for the current UI task.\n`;
   md += `---\n\n`;
 
   md += `# ${profile.projectName} Design System\n\n`;
@@ -108,7 +111,10 @@ export function generateCompactSkillMd(profile: DesignProfile, skillDir: string)
     md += `### Essential Colors\n\n`;
     md += `| Role | Value |\n|---|---|\n`;
     for (const color of colors) md += `| ${color.role} | \`${color.hex}\` |\n`;
-    md += `\nFor the complete palette and provenance, read \`references/DESIGN.md\` or \`tokens/colors.json\`.\n\n`;
+    const colorDetail = tokenSet.has('colors.json')
+      ? '`references/DESIGN.md` or `tokens/colors.json`'
+      : '`references/DESIGN.md`';
+    md += `\nFor the complete palette and provenance, read ${colorDetail}.\n\n`;
   }
 
   if (typography.length > 0) {
@@ -117,7 +123,10 @@ export function generateCompactSkillMd(profile: DesignProfile, skillDir: string)
     for (const token of typography) {
       md += `| ${token.role} | ${token.fontFamily} | ${token.fontSize || '—'} | ${token.fontWeight ?? '—'} |\n`;
     }
-    md += `\nFor the full type scale and source evidence, read \`references/DESIGN.md\` or \`tokens/typography.json\`.\n\n`;
+    const typeDetail = tokenSet.has('typography.json')
+      ? '`references/DESIGN.md` or `tokens/typography.json`'
+      : '`references/DESIGN.md`';
+    md += `\nFor the full type scale and source evidence, read ${typeDetail}.\n\n`;
   }
 
   if (components.length > 0) {
@@ -131,7 +140,10 @@ export function generateCompactSkillMd(profile: DesignProfile, skillDir: string)
     if (profile.components.length > components.length) {
       md += `- …and ${profile.components.length - components.length} more detected component record(s)\n`;
     }
-    md += `\nRead \`references/COMPONENTS.md\` before implementing or modifying extracted components.\n\n`;
+    const componentDetail = referenceSet.has('COMPONENTS.md')
+      ? '`references/COMPONENTS.md`'
+      : '`references/DESIGN.md`';
+    md += `\nRead ${componentDetail} before implementing or modifying extracted components.\n\n`;
   }
 
   if (breakpoints.length > 0) {
@@ -139,7 +151,11 @@ export function generateCompactSkillMd(profile: DesignProfile, skillDir: string)
     for (const breakpoint of breakpoints) {
       md += `- **${breakpoint.name}:** \`${breakpoint.value}\` (${breakpoint.source})\n`;
     }
-    md += `\nDeclared breakpoints are static CSS evidence. If \`references/RESPONSIVE.md\` exists, use it for measured viewport behavior without treating sampled widths as exact breakpoint proof.\n\n`;
+    if (referenceSet.has('RESPONSIVE.md')) {
+      md += `\nDeclared breakpoints are static CSS evidence. Use \`references/RESPONSIVE.md\` for measured viewport behavior without treating sampled widths as exact breakpoint proof.\n\n`;
+    } else {
+      md += `\nThese are declared static breakpoints. No measured responsive reference was generated for this run.\n\n`;
+    }
   }
 
   md += `## Reference Routing\n\n`;
@@ -181,12 +197,50 @@ export function generateCompactSkillMd(profile: DesignProfile, skillDir: string)
   }
 
   md += `## Task Routing Examples\n\n`;
-  md += `- **Build or restyle a component:** read \`references/COMPONENTS.md\`, then exact token files as needed.\n`;
-  md += `- **Recreate a page:** read \`references/VISUAL_GUIDE.md\` and \`references/LAYOUT.md\`, then inspect that page's screenshots.\n`;
-  md += `- **Implement responsive behavior:** read \`references/RESPONSIVE.md\` and inspect the matching \`screens/responsive/\` samples.\n`;
-  md += `- **Implement hover/focus behavior:** read \`references/INTERACTIONS.md\` and inspect matching \`screens/states/\` captures.\n`;
-  md += `- **Reproduce motion:** read \`references/ANIMATIONS.md\` and inspect relevant \`screens/scroll/\` evidence.\n`;
-  md += `- **Need only exact colors/type/spacing:** prefer the relevant file under \`tokens/\` or \`references/DESIGN.md\`; do not load visual/motion references unnecessarily.\n\n`;
+  const componentRoute = referenceSet.has('COMPONENTS.md')
+    ? '`references/COMPONENTS.md`'
+    : '`references/DESIGN.md`';
+  md += `- **Build or restyle a component:** read ${componentRoute}, then exact token evidence as needed.\n`;
+
+  const pageRefs = ['VISUAL_GUIDE.md', 'LAYOUT.md']
+    .filter(file => referenceSet.has(file))
+    .map(file => `\`references/${file}\``);
+  if (pageRefs.length > 0 || screenSet.has('pages')) {
+    const pageParts = [...pageRefs];
+    if (screenSet.has('pages')) pageParts.push('the matching `screens/pages/` capture');
+    md += `- **Recreate a page:** use ${pageParts.join(' and ')}.\n`;
+  }
+
+  if (referenceSet.has('RESPONSIVE.md') || screenSet.has('responsive')) {
+    const responsiveParts: string[] = [];
+    if (referenceSet.has('RESPONSIVE.md')) responsiveParts.push('`references/RESPONSIVE.md`');
+    if (screenSet.has('responsive')) responsiveParts.push('the matching `screens/responsive/` samples');
+    md += `- **Implement responsive behavior:** use ${responsiveParts.join(' and ')}.\n`;
+  }
+
+  if (referenceSet.has('INTERACTIONS.md') || screenSet.has('states')) {
+    const interactionParts: string[] = [];
+    if (referenceSet.has('INTERACTIONS.md')) interactionParts.push('`references/INTERACTIONS.md`');
+    if (screenSet.has('states')) interactionParts.push('matching `screens/states/` captures');
+    md += `- **Implement hover/focus behavior:** use ${interactionParts.join(' and ')}.\n`;
+  }
+
+  if (referenceSet.has('ANIMATIONS.md') || screenSet.has('scroll')) {
+    const motionParts: string[] = [];
+    if (referenceSet.has('ANIMATIONS.md')) motionParts.push('`references/ANIMATIONS.md`');
+    if (screenSet.has('scroll')) motionParts.push('relevant `screens/scroll/` evidence');
+    md += `- **Reproduce motion:** use ${motionParts.join(' and ')}.\n`;
+  }
+
+  const exactTokenRoutes: string[] = [];
+  if (tokenSet.has('colors.json')) exactTokenRoutes.push('`tokens/colors.json`');
+  if (tokenSet.has('spacing.json')) exactTokenRoutes.push('`tokens/spacing.json`');
+  if (tokenSet.has('typography.json')) exactTokenRoutes.push('`tokens/typography.json`');
+  if (exactTokenRoutes.length > 0) {
+    md += `- **Need only exact colors/type/spacing:** prefer ${exactTokenRoutes.join(', ')} as applicable; use \`references/DESIGN.md\` for semantic context.\n\n`;
+  } else {
+    md += `- **Need only exact colors/type/spacing:** read \`references/DESIGN.md\`; no standalone token JSON was generated for this run.\n\n`;
+  }
 
   md += `## Workflow\n\n`;
   md += `1. Identify the UI surface and evidence category required by the request.\n`;

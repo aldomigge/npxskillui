@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsup",
     "start": "node dist/cli.js",
-    "benchmark:components": "npm run build && node dist/component-benchmark.js && node dist/component-style-variant-benchmark.js && node dist/runtime-discovery-benchmark.js && node dist/responsive-evidence-benchmark.js",
+    "benchmark:components": "npm run build && node dist/component-benchmark.js && node dist/component-style-variant-benchmark.js && node dist/runtime-discovery-benchmark.js && node dist/responsive-evidence-benchmark.js && node dist/responsive-skill-paths-benchmark.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

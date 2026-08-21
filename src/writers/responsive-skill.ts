@@ -17,7 +17,9 @@ export function embedResponsiveEvidenceInSkill(skillDir: string): void {
   let skillMd = fs.readFileSync(skillMdPath, 'utf-8');
   if (skillMd.includes('## Responsive Runtime Evidence (RESPONSIVE.md)')) return;
 
-  const responsiveMd = fs.readFileSync(responsiveMdPath, 'utf-8').trim();
+  const responsiveMd = rewriteResponsiveEmbeddedPaths(
+    fs.readFileSync(responsiveMdPath, 'utf-8').trim()
+  );
   if (!responsiveMd) return;
 
   skillMd = addResponsiveReferenceRow(skillMd);
@@ -39,6 +41,18 @@ export function embedResponsiveEvidenceInSkill(skillDir: string): void {
   }
 
   fs.writeFileSync(skillMdPath, skillMd, 'utf-8');
+}
+
+/**
+ * RESPONSIVE.md lives under references/, so its Markdown images point one
+ * directory up (`../screens/...`). Once that document is embedded into the
+ * root SKILL.md, those links must become root-relative (`screens/...`).
+ *
+ * Only Markdown link/image destinations are rewritten. Literal examples or
+ * prose containing `../screens/` remain untouched.
+ */
+export function rewriteResponsiveEmbeddedPaths(content: string): string {
+  return content.replace(/(\]\()\.\.\/screens\//g, '$1screens/');
 }
 
 function addResponsiveReferenceRow(content: string): string {

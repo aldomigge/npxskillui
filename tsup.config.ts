@@ -38,6 +38,7 @@ export default defineConfig({
     'component-style-variant-benchmark': 'src/benchmarks/component-style-variants.ts',
     'runtime-discovery-benchmark': 'src/benchmarks/runtime-discovery.ts',
     'responsive-evidence-benchmark': 'src/benchmarks/responsive-evidence.ts',
+    'responsive-skill-paths-benchmark': 'src/benchmarks/responsive-skill-paths.ts',
   },
   format: ['cjs'],
   platform: 'node',

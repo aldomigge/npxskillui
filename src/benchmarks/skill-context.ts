@@ -12,9 +12,11 @@ import {
 function main(): void {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'skillui-context-'));
   const skillDir = path.join(tempRoot, 'fixture-design');
+  const minimalSkillDir = path.join(tempRoot, 'minimal-design');
 
   try {
     prepareFixture(skillDir);
+    prepareMinimalFixture(minimalSkillDir);
     const profile = fixtureProfile();
 
     let parsingPassed = 0;
@@ -39,6 +41,14 @@ function main(): void {
     expect(compact.includes('| accent | `#ff3f3f` |'), 'essential extracted colors should remain immediately available'); routingPassed++;
     expect(compact.includes('| body | Circe | 16px | 400 |'), 'essential typography roles should remain immediately available'); routingPassed++;
 
+    const minimalCompact = generateCompactSkillMd(profile, minimalSkillDir);
+    let availabilityPassed = 0;
+    expect(minimalCompact.includes('`references/DESIGN.md`'), 'minimal compact root should retain DESIGN.md fallback'); availabilityPassed++;
+    expect(!minimalCompact.includes('`references/RESPONSIVE.md`'), 'minimal compact root must not route to missing RESPONSIVE.md'); availabilityPassed++;
+    expect(!minimalCompact.includes('`references/ANIMATIONS.md`'), 'minimal compact root must not route to missing ANIMATIONS.md'); availabilityPassed++;
+    expect(!minimalCompact.includes('`tokens/colors.json`'), 'minimal compact root must not route to missing token JSON'); availabilityPassed++;
+    expect(minimalCompact.includes('No measured responsive reference was generated for this run.'), 'minimal compact root should describe missing responsive runtime evidence safely'); availabilityPassed++;
+
     let budgetPassed = 0;
     expect(metrics.lines <= 500, `compact root should stay within 500 lines, got ${metrics.lines}`); budgetPassed++;
     expect(metrics.characters < 20_000, `compact fixture should remain concise, got ${metrics.characters} chars`); budgetPassed++;
@@ -55,6 +65,7 @@ function main(): void {
     console.log('Skill context benchmark');
     console.log(`  parsing cases:          ${parsingPassed}/4`);
     console.log(`  routing cases:          ${routingPassed}/9`);
+    console.log(`  availability cases:     ${availabilityPassed}/5`);
     console.log(`  compact budget cases:   ${budgetPassed}/2`);
     console.log(`  preservation cases:     ${preservationPassed}/4`);
     console.log(`  compact lines:          ${metrics.lines}`);
@@ -95,6 +106,12 @@ function prepareFixture(skillDir: string): void {
   fs.writeFileSync(path.join(skillDir, 'screens', 'responsive', 'home--390x844.png'), Buffer.from([0]));
   fs.writeFileSync(path.join(skillDir, 'screens', 'pages', 'home.png'), Buffer.from([0]));
   fs.writeFileSync(path.join(skillDir, 'screens', 'INDEX.md'), '# Screens\n', 'utf-8');
+}
+
+function prepareMinimalFixture(skillDir: string): void {
+  fs.mkdirSync(path.join(skillDir, 'references'), { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# Legacy root\n', 'utf-8');
+  fs.writeFileSync(path.join(skillDir, 'references', 'DESIGN.md'), '# Design only\n', 'utf-8');
 }
 
 function fixtureProfile(): DesignProfile {
